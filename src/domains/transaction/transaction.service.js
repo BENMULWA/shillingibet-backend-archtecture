@@ -24,12 +24,7 @@ const {
 
 const makeRef = (prefix) => `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
-const callbackUrl = (type) => {
-  const base = `${config.mamlaka.callbackBaseUrl}${config.apiPrefix}/transactions/callback/${type}`;
-  return config.mamlaka.callbackSecret
-    ? `${base}?secret=${encodeURIComponent(config.mamlaka.callbackSecret)}`
-    : base;
-};
+const callbackUrl = () => `${config.mamlaka.callbackBaseUrl}/callbacks/mamlaka`;
 
 const deposit = async (user, { amount, phone, provider, walletType: requestedWalletType }) => {
   const payerPhone = normalizePhone(phone);
@@ -199,7 +194,7 @@ const validateCallbackForTxn = (txn, type, payload, expectedType) => {
     return { ok: false, reason: 'transaction type mismatch' };
   }
 
-  if (txn.secureId && (!payload.secureId || txn.secureId !== payload.secureId)) {
+  if (txn.secureId && payload.secureId && txn.secureId !== payload.secureId) {
     logger.warn('Callback secureId mismatch', payload.externalId);
     return { ok: false, reason: 'secureId mismatch' };
   }
@@ -429,6 +424,20 @@ const handleCallback = async (type, payload) => {
   return result;
 };
 
+const handleMamlakaCallback = async (payload) => {
+  if (!payload?.externalId) return handleCallback(null, payload || {});
+
+  const txn = await Transaction.findOne({ externalId: payload.externalId })
+    .select('type')
+    .lean();
+  if (!txn) {
+    logger.warn('Callback for unknown transaction', payload.externalId);
+    return { ok: false, reason: 'unknown transaction' };
+  }
+
+  return handleCallback(txn.type === 'deposit' ? 'deposit' : 'withdraw', payload);
+};
+
 const listForUser = async (userId, { type, status, page, limit }) => {
   const filter = { user: userId };
   if (type) filter.type = type;
@@ -496,4 +505,11 @@ const getById = async (userId, id) => {
   return txn;
 };
 
-module.exports = { deposit, withdraw, handleCallback, listForUser, getById };
+module.exports = {
+  deposit,
+  withdraw,
+  handleCallback,
+  handleMamlakaCallback,
+  listForUser,
+  getById,
+};

@@ -5,7 +5,7 @@ const ApiError = require('../../utils/ApiError');
 const config = require('../../config');
 const { authenticate } = require('../../middlewares/auth');
 const validate = require('../../middlewares/validate');
-const { depositLimiter } = require('../../middlewares/rateLimiter');
+const { depositLimiter, withdrawalLimiter } = require('../../middlewares/rateLimiter');
 const controller = require('./wallet.controller');
 const schemas = require('./wallet.validation');
 
@@ -39,6 +39,15 @@ router.post(
   depositLimiter,
   validate({ body: schemas.cardLink }),
   controller.cardLink,
+);
+
+router.get('/celo/deposit', controller.celoDeposit);
+
+router.post(
+  '/celo/withdraw',
+  withdrawalLimiter,
+  validate({ body: schemas.celoWithdraw }),
+  controller.celoWithdraw,
 );
 
 module.exports = router;

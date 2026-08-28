@@ -46,4 +46,12 @@ const callback = z.object({
   user_id: z.union([z.coerce.number().int().positive(), z.string().trim().min(1)]).optional(),
 });
 
-module.exports = { billOrder, cardLink, callback };
+const celoWithdraw = z.object({
+  amount: z.coerce.number().positive('Withdrawal amount must be greater than zero'),
+  to_address: z
+    .string()
+    .trim()
+    .regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Celo wallet address'),
+});
+
+module.exports = { billOrder, cardLink, callback, celoWithdraw };

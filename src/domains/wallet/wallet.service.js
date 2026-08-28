@@ -8,14 +8,17 @@ const {
   withTransaction,
   incWalletBalance,
   normalizeWalletType,
+  walletBalanceQuery,
 } = require('../../utils/db');
 const fusion = require('../../integrations/fusion/fusion.client');
 const transactpay = require('../../integrations/transactpay/transactpay.client');
+const mamlakaCelo = require('../../integrations/mamlaka/celo.client');
 const Transaction = require('../transaction/transaction.model');
 const User = require('../user/user.model');
 
 const makeRef = () => `FUS-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 const makeCardRef = () => `CARD-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+const makeCeloRef = () => `CELO-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
 const getFusionOrder = (providerResponse) =>
   providerResponse?.order && typeof providerResponse.order === 'object'
@@ -206,6 +209,94 @@ const createCardPaymentLink = async (user, payload) => {
   }
 };
 
+const getCeloDepositInstructions = () => mamlakaCelo.getDepositInstructions();
+
+const withdrawCelo = async (user, payload) => {
+  const rate = config.mamlakaCelo.usdcKesRate;
+  if (!rate) {
+    throw new ApiError(503, 'USDC to KES withdrawal rate is not configured');
+  }
+
+  const usdcAmount = Number(payload.amount);
+  const debitAmountKes = Number((usdcAmount * rate).toFixed(2));
+  const externalId = makeCeloRef();
+
+  const debited = await User.findOneAndUpdate(
+    { _id: user._id, ...walletBalanceQuery('balance', debitAmountKes) },
+    incWalletBalance('balance', -debitAmountKes),
+    { new: true }
+  ).lean();
+  if (!debited) throw ApiError.badRequest('Insufficient main wallet balance');
+
+  let txn;
+  try {
+    txn = await Transaction.create({
+      user: user._id,
+      type: 'withdrawal',
+      amount: debitAmountKes,
+      currency: 'KES',
+      walletType: 'balance',
+      provider: 'Mamlaka Celo',
+      phone: user.phone,
+      externalId,
+    });
+
+    const providerResponse = await mamlakaCelo.withdraw({
+      toAddress: payload.to_address,
+      amount: usdcAmount,
+      idempotencyKey: externalId,
+    });
+    const rawStatus = String(providerResponse.status || providerResponse.transaction_status || '').toLowerCase();
+    const failed = ['failed', 'rejected', 'cancelled'].includes(rawStatus);
+    if (failed) {
+      throw new ApiError(502, providerResponse.message || 'Valora withdrawal was rejected');
+    }
+
+    const completed = ['complete', 'completed', 'success', 'successful'].includes(rawStatus);
+    txn.status = completed ? 'completed' : 'pending';
+    txn.secureId =
+      providerResponse.withdrawal_id ||
+      providerResponse.id ||
+      providerResponse.transaction_id ||
+      null;
+    txn.receipt =
+      providerResponse.transaction_hash ||
+      providerResponse.tx_hash ||
+      providerResponse.hash ||
+      null;
+    txn.providerResponse = {
+      ...providerResponse,
+      requestedUsdc: usdcAmount,
+      usdcKesRate: rate,
+      debitAmountKes,
+      toAddress: payload.to_address,
+    };
+    if (completed) {
+      txn.completedAt = new Date();
+      txn.walletAppliedAt = txn.completedAt;
+    }
+    await txn.save();
+
+    return {
+      transaction: txn.toJSON(),
+      amountUsdc: usdcAmount,
+      debitAmountKes,
+      rate,
+      provider: providerResponse,
+    };
+  } catch (error) {
+    await User.updateOne({ _id: user._id }, incWalletBalance('balance', debitAmountKes));
+    if (txn) {
+      txn.status = 'failed';
+      txn.failureReason = error.message;
+      txn.completedAt = new Date();
+      txn.walletAppliedAt = txn.completedAt;
+      await txn.save();
+    }
+    throw error;
+  }
+};
+
 const findCallbackTransaction = async (payload, session) => {
   const query = payload.external_ref
     ? { externalId: payload.external_ref, provider: 'Fusion', type: 'deposit' }
@@ -379,6 +470,8 @@ const handleCallback = async (payload) => {
 module.exports = {
   createBillOrder,
   createCardPaymentLink,
+  getCeloDepositInstructions,
+  withdrawCelo,
   handleCallback,
   callbackUrl,
   isExpiredPendingFusionTransaction,

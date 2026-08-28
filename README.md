@@ -100,7 +100,7 @@ Base prefix: `/api/v1`
 | POST   | `/transactions/withdraw`      | user   | KES or airtime withdrawal        |
 | GET    | `/transactions`               | user   | List own transactions            |
 | GET    | `/transactions/:id`           | user   | Transaction detail               |
-| POST   | `/transactions/callback/:type`| —      | Mamlaka webhook (`deposit`/`withdraw`) |
+| POST   | `/callbacks/mamlaka`           | —      | Signed Mamlaka deposit/withdrawal webhook |
 | POST   | `/wallet/billOrder`           | user   | Fusion external bill-order deposit |
 
 ## Payments
@@ -112,13 +112,13 @@ Deposits and withdrawals run through the [Mamlaka mobile-money API](https://gith
 **Deposit (collection / STK push)**
 1. `POST /transactions/deposit { amount, phone, provider? }` — creates a `pending` transaction and triggers an STK push to the phone.
 2. Customer approves on their handset.
-3. Mamlaka calls `POST /transactions/callback/deposit`. On `COMPLETE`, the transaction status and wallet credit commit together in one MongoDB transaction. Duplicate callbacks are ignored.
+3. Mamlaka calls `POST /callbacks/mamlaka`. On `COMPLETE`, the transaction status and wallet credit commit together in one MongoDB transaction. Duplicate callbacks are ignored.
 
 **Withdrawal (payout / B2C / airtime)**
 1. `POST /transactions/withdraw { amount, phone, provider?, walletType? }`
 2. If `walletType` is `balance` or omitted, Betnare debits the KES wallet and calls Mamlaka transfer payout.
 3. If `walletType` is `airtime`, Betnare checks `airtimeBalance`, debits it atomically, and calls Mamlaka airtime disbursement.
-4. For cash payouts, Mamlaka calls `POST /transactions/callback/withdraw`. On `FAILED` the debit is refunded automatically.
+4. For cash payouts, Mamlaka calls `POST /callbacks/mamlaka`. On `FAILED` the debit is refunded automatically.
 5. For airtime payouts, Betnare uses the immediate Mamlaka response:
    - `success` => transaction `completed`
    - `failed` => transaction `failed` and the airtime wallet is refunded
@@ -129,7 +129,7 @@ Deposits and withdrawals run through the [Mamlaka mobile-money API](https://gith
 - `MAMLAKA_MERCHANT_ID` — `impalaMerchantId` (equals the username, `shilingibet`).
 - `MAMLAKA_CALLBACK_BASE_URL` — optional dedicated public HTTPS URL Mamlaka posts callbacks to. Useful when mobile-money callbacks should hit an ngrok tunnel or a different host than other providers.
 - `PUBLIC_CALLBACK_BASE_URL` — shared public HTTPS callback base URL used when a provider-specific callback URL is not set.
-- `MAMLAKA_CALLBACK_SECRET` — optional shared secret appended as `?secret=` to callback URLs and verified on inbound webhooks.
+- `MAMLAKA_CALLBACK_SECRET` — required HMAC secret for `POST /callbacks/mamlaka`. Mamlaka must sign the exact raw request body with HMAC-SHA256 and send it as `X-Mamlaka-Signature: sha256=<hex digest>`.
 - Limits: `DEPOSIT_MIN/MAX` (1 / 250,000), `WITHDRAWAL_MIN/MAX` (10 / 250,000).
 
 **Test numbers** (from the docs): `0710000000` → success, `0720000000` → failed.

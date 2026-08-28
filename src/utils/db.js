@@ -68,7 +68,13 @@ const walletBalanceQuery = (walletType, amount) => ({
 const incWalletBalance = (walletType, delta) => {
   const field = walletBalanceField(walletType);
   return [
-    { $set: { [field]: { $round: [{ $add: [`$${field}`, delta] }, 2] } } },
+    {
+      $set: {
+        [field]: {
+          $round: [{ $add: [{ $ifNull: [`$${field}`, 0] }, delta] }, 2],
+        },
+      },
+    },
   ];
 };
 

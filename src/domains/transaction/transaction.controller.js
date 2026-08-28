@@ -1,6 +1,7 @@
 'use strict';
 
 const asyncHandler = require('../../utils/asyncHandler');
+const ApiError = require('../../utils/ApiError');
 const { sendSuccess } = require('../../utils/response');
 const service = require('./transaction.service');
 
@@ -35,4 +36,16 @@ const callback = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, ...result });
 });
 
-module.exports = { deposit, withdraw, list, getById, callback };
+const mamlakaCallback = asyncHandler(async (req, res) => {
+  let payload;
+  try {
+    payload = JSON.parse(req.body.toString('utf8'));
+  } catch {
+    throw ApiError.badRequest('Invalid JSON callback payload');
+  }
+
+  const result = await service.handleMamlakaCallback(payload);
+  res.status(200).json({ success: true, ...result });
+});
+
+module.exports = { deposit, withdraw, list, getById, callback, mamlakaCallback };

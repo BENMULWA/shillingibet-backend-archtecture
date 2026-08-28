@@ -27,4 +27,18 @@ const callback = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, ...result });
 });
 
-module.exports = { billOrder, cardLink, callback };
+const celoDeposit = asyncHandler(async (_req, res) => {
+  const result = await service.getCeloDepositInstructions();
+  sendSuccess(res, { data: result });
+});
+
+const celoWithdraw = asyncHandler(async (req, res) => {
+  const result = await service.withdrawCelo(req.user, req.body);
+  sendSuccess(res, {
+    statusCode: 201,
+    message: 'Valora withdrawal submitted',
+    data: result,
+  });
+});
+
+module.exports = { billOrder, cardLink, callback, celoDeposit, celoWithdraw };
