@@ -43,13 +43,7 @@ const authenticate = async () => {
     body: JSON.stringify({ api_key: apiKey, secret_key: secretKey }),
   });
   const data = await parseResponse(response);
-  const token =
-    data.access_token ||
-    data.accessToken ||
-    data.token ||
-    data.data?.access_token ||
-    data.data?.accessToken ||
-    data.data?.token;
+  const token = data.access_token;
 
   if (!token) {
     throw new ApiError(502, 'Mamlaka Celo authentication returned no token');
@@ -81,16 +75,43 @@ const request = async (path, options = {}, retry = true) => {
   return parseResponse(response);
 };
 
-const getDepositInstructions = () => request('/v1/deposit');
-const getBalance = () => request('/v1/balance');
-const withdraw = ({ toAddress, amount, idempotencyKey }) =>
-  request('/v1/withdraw', {
+// Every call below is scoped by externalUserId. The gateway derives and
+// tracks a separate deposit address and balance per (this partner,
+// externalUserId) — it must always be this platform's own internal user id
+// (e.g. the Mongo _id), never omitted. Calling without it would credit/debit
+// a shared platform-wide bucket instead of the individual bettor.
+const getDepositInstructions = (externalUserId, asset = 'USDT') =>
+  request('/api/celo/deposit/initiate', {
+    method: 'POST',
+    body: { external_user_id: String(externalUserId), asset },
+  });
+
+const getDepositStatus = (depositId) => request(`/api/celo/deposit/${encodeURIComponent(depositId)}/status`);
+
+const getBalance = (externalUserId) =>
+  request(`/api/celo/balance/${encodeURIComponent(String(externalUserId))}`);
+
+// Live rate, margin-adjusted the same way the gateway credits deposits —
+// use this instead of a locally hardcoded rate so a KES payout amount always
+// matches what the gateway will actually settle.
+const getQuote = ({ amount, from, to }) =>
+  request(
+    `/api/celo/quote?amount=${encodeURIComponent(amount)}&from_currency=${encodeURIComponent(from)}&to_currency=${encodeURIComponent(to)}`
+  );
+
+// NOTE: the gateway does not currently support an idempotency key on
+// withdrawals — a retried call (e.g. after a network timeout) can double-send.
+// Callers should treat a timeout as "unknown outcome, check status/balance
+// before retrying" rather than blindly retrying this call.
+const withdraw = ({ externalUserId, asset = 'USDT', amount, toAddress }) =>
+  request('/api/celo/withdraw', {
     method: 'POST',
     body: {
-      to_address: toAddress,
+      external_user_id: String(externalUserId),
+      asset,
       amount,
-      idempotency_key: idempotencyKey,
+      destination_address: toAddress,
     },
   });
 
-module.exports = { getDepositInstructions, getBalance, withdraw };
+module.exports = { getDepositInstructions, getDepositStatus, getBalance, getQuote, withdraw };

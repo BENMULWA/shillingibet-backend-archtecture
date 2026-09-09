@@ -52,6 +52,7 @@ const celoWithdraw = z.object({
     .string()
     .trim()
     .regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Celo wallet address'),
+  asset: z.enum(['cUSD', 'USDC', 'USDT']).optional(),
 });
 
 module.exports = { billOrder, cardLink, callback, celoWithdraw };

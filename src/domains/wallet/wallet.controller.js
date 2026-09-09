@@ -27,8 +27,8 @@ const callback = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, ...result });
 });
 
-const celoDeposit = asyncHandler(async (_req, res) => {
-  const result = await service.getCeloDepositInstructions();
+const celoDeposit = asyncHandler(async (req, res) => {
+  const result = await service.getCeloDepositInstructions(req.user, req.query.asset);
   sendSuccess(res, { data: result });
 });
 

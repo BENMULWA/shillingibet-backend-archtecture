@@ -209,16 +209,22 @@ const createCardPaymentLink = async (user, payload) => {
   }
 };
 
-const getCeloDepositInstructions = () => mamlakaCelo.getDepositInstructions();
+const getCeloDepositInstructions = (user, asset = 'USDT') =>
+  mamlakaCelo.getDepositInstructions(user._id, asset);
 
 const withdrawCelo = async (user, payload) => {
-  const rate = config.mamlakaCelo.usdcKesRate;
-  if (!rate) {
-    throw new ApiError(503, 'USDC to KES withdrawal rate is not configured');
-  }
-
+  const asset = payload.asset || 'USDT';
   const usdcAmount = Number(payload.amount);
-  const debitAmountKes = Number((usdcAmount * rate).toFixed(2));
+
+  // Live, margin-adjusted rate from the gateway itself rather than a
+  // locally configured constant — keeps this in sync with what the
+  // gateway will actually credit/settle, instead of drifting apart over time.
+  const quote = await mamlakaCelo.getQuote({ amount: usdcAmount, from: asset, to: 'KES' });
+  const rate = Number(quote.rate);
+  if (!rate) {
+    throw new ApiError(503, `${asset} to KES withdrawal rate is not available`);
+  }
+  const debitAmountKes = Number((quote.to_amount ?? usdcAmount * rate).toFixed(2));
   const externalId = makeCeloRef();
 
   const debited = await User.findOneAndUpdate(
@@ -242,9 +248,10 @@ const withdrawCelo = async (user, payload) => {
     });
 
     const providerResponse = await mamlakaCelo.withdraw({
+      externalUserId: user._id,
+      asset,
       toAddress: payload.to_address,
       amount: usdcAmount,
-      idempotencyKey: externalId,
     });
     const rawStatus = String(providerResponse.status || providerResponse.transaction_status || '').toLowerCase();
     const failed = ['failed', 'rejected', 'cancelled'].includes(rawStatus);
