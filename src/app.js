@@ -14,7 +14,9 @@ const { apiLimiter } = require('./middlewares/rateLimiter');
 const notFound = require('./middlewares/notFound');
 const errorHandler = require('./middlewares/errorHandler');
 const verifyMamlakaSignature = require('./middlewares/verifyMamlakaSignature');
+const verifyCeloGatewaySignature = require('./middlewares/verifyCeloGatewaySignature');
 const transactionController = require('./domains/transaction/transaction.controller');
+const walletController = require('./domains/wallet/wallet.controller');
 const routes = require('./routes');
 
 const app = express();
@@ -33,6 +35,15 @@ app.post(
   express.raw({ type: '*/*', limit: '10kb' }),
   verifyMamlakaSignature,
   transactionController.mamlakaCallback
+);
+
+// Same reasoning as above: verify the Celo gateway's HMAC against the exact
+// bytes it signed, before any body-parsing middleware can alter them.
+app.post(
+  '/callbacks/celo',
+  express.raw({ type: '*/*', limit: '10kb' }),
+  verifyCeloGatewaySignature,
+  walletController.celoWebhook
 );
 
 app.use(bodyParser.json({ limit: '10kb' }));

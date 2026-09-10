@@ -63,7 +63,7 @@ const config = Object.freeze({
     baseUrl: (process.env.MAMLAKA_CELO_BASE_URL || 'https://celo.mamlakapsp.com').replace(/\/$/, ''),
     apiKey: process.env.MAMLAKA_CELO_API_KEY || '',
     secretKey: process.env.MAMLAKA_CELO_SECRET_KEY || '',
-    usdcKesRate: parseFloat(process.env.MAMLAKA_CELO_USDC_KES_RATE) || 0,
+    webhookSecret: process.env.MAMLAKA_CELO_WEBHOOK_SECRET || '',
   },
 
   fusion: {

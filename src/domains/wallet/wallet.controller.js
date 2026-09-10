@@ -2,6 +2,7 @@
 
 const asyncHandler = require('../../utils/asyncHandler');
 const { sendSuccess } = require('../../utils/response');
+const ApiError = require('../../utils/ApiError');
 const service = require('./wallet.service');
 
 const billOrder = asyncHandler(async (req, res) => {
@@ -41,4 +42,16 @@ const celoWithdraw = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { billOrder, cardLink, callback, celoDeposit, celoWithdraw };
+const celoWebhook = asyncHandler(async (req, res) => {
+  let payload;
+  try {
+    payload = JSON.parse(req.body.toString('utf8'));
+  } catch {
+    throw ApiError.badRequest('Invalid JSON webhook payload');
+  }
+
+  const result = await service.handleCeloWebhook(payload);
+  res.status(200).json({ success: true, ...result });
+});
+
+module.exports = { billOrder, cardLink, callback, celoDeposit, celoWithdraw, celoWebhook };

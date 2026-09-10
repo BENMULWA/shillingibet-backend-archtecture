@@ -252,6 +252,10 @@ const withdrawCelo = async (user, payload) => {
       asset,
       toAddress: payload.to_address,
       amount: usdcAmount,
+      // Reuse this same externalId if this function is ever retried for the
+      // same logical withdrawal attempt — that's what lets the gateway
+      // replay the original result instead of double-sending.
+      idempotencyKey: externalId,
     });
     const rawStatus = String(providerResponse.status || providerResponse.transaction_status || '').toLowerCase();
     const failed = ['failed', 'rejected', 'cancelled'].includes(rawStatus);
@@ -474,11 +478,125 @@ const handleCallback = async (payload) => {
   );
 };
 
+// ======================================================================
+// Celo gateway webhook — deposit.credited / withdrawal.completed /
+// withdrawal.failed / swap.completed, signature-verified by
+// verifyCeloGatewaySignature before this is ever called.
+// ======================================================================
+
+const applyCeloDepositCredit = async (payload) => {
+  const { externalUserId, asset, amount, txHash, kesAmount } = payload;
+
+  if (!externalUserId || !txHash) {
+    logger.warn('Celo deposit webhook missing externalUserId/txHash', payload);
+    return { ok: false, reason: 'missing identifiers' };
+  }
+
+  if (kesAmount == null) {
+    // The gateway couldn't quote KES at credit time (FX API down with no
+    // cache yet) — the crypto deposit itself is still safely credited on
+    // the gateway's own ledger. Guessing a rate here would risk crediting
+    // the wrong KES amount, so this is left for manual reconciliation
+    // instead.
+    logger.warn('Celo deposit webhook missing kesAmount, skipping wallet credit', txHash);
+    return { ok: true, status: 'no_kes_quote', idempotent: false };
+  }
+
+  const user = await User.findById(externalUserId).lean();
+  if (!user) {
+    logger.warn('Celo deposit webhook for unknown user', externalUserId, txHash);
+    return { ok: false, reason: 'unknown user' };
+  }
+
+  const kesCredit = Number(Number(kesAmount).toFixed(2));
+
+  // Transaction.externalId has a unique index — that's the real dedupe
+  // guard (atomic), not the absence of a prior find(). Webhook delivery
+  // from the gateway isn't guaranteed exactly-once, and this also covers a
+  // retried delivery landing here twice concurrently.
+  let txn;
+  try {
+    txn = await Transaction.create({
+      user: user._id,
+      type: 'deposit',
+      status: 'completed',
+      amount: kesCredit,
+      currency: 'KES',
+      walletType: 'balance',
+      provider: 'Mamlaka Celo',
+      phone: user.phone,
+      externalId: txHash,
+      receipt: txHash,
+      providerResponse: payload,
+      completedAt: new Date(),
+      walletAppliedAt: new Date(),
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      logger.info('Duplicate Celo deposit webhook ignored', txHash);
+      return { ok: true, status: 'completed', idempotent: true };
+    }
+    throw err;
+  }
+
+  await User.updateOne({ _id: user._id }, incWalletBalance('balance', kesCredit));
+
+  logger.info(
+    'Celo deposit credited via webhook',
+    externalUserId,
+    asset,
+    amount,
+    '->',
+    kesCredit,
+    'KES',
+    txHash
+  );
+
+  return { ok: true, status: 'completed', transactionId: txn._id };
+};
+
+const reconcileCeloWithdrawal = async (payload, event) => {
+  const { txHash } = payload;
+  if (!txHash) return { ok: true, handled: false };
+
+  // withdrawCelo() above already applies the synchronous HTTP response from
+  // /api/celo/withdraw, so this webhook is normally just a confirmatory
+  // echo of a withdrawal this service already recorded. Nothing to do if no
+  // matching record exists (e.g. a withdrawal initiated some other way).
+  const txn = await Transaction.findOne({ receipt: txHash, provider: 'Mamlaka Celo', type: 'withdrawal' });
+  if (!txn) return { ok: true, handled: false };
+
+  const nextStatus = event === 'withdrawal.completed' ? 'completed' : 'failed';
+  if (txn.status !== nextStatus) {
+    txn.status = nextStatus;
+    if (event === 'withdrawal.failed') {
+      txn.failureReason = payload.error || 'Reported failed by gateway webhook';
+    }
+    await txn.save();
+  }
+
+  return { ok: true, status: nextStatus, transactionId: txn._id };
+};
+
+const handleCeloWebhook = async (payload) => {
+  const event = payload.event;
+  logger.info('Celo gateway webhook received', event, payload.externalUserId);
+
+  if (event === 'deposit.credited') return applyCeloDepositCredit(payload);
+  if (event === 'withdrawal.completed' || event === 'withdrawal.failed') {
+    return reconcileCeloWithdrawal(payload, event);
+  }
+
+  // swap.completed and anything else: acknowledged, no local action needed.
+  return { ok: true, event, handled: false };
+};
+
 module.exports = {
   createBillOrder,
   createCardPaymentLink,
   getCeloDepositInstructions,
   withdrawCelo,
+  handleCeloWebhook,
   handleCallback,
   callbackUrl,
   isExpiredPendingFusionTransaction,

@@ -99,11 +99,13 @@ const getQuote = ({ amount, from, to }) =>
     `/api/celo/quote?amount=${encodeURIComponent(amount)}&from_currency=${encodeURIComponent(from)}&to_currency=${encodeURIComponent(to)}`
   );
 
-// NOTE: the gateway does not currently support an idempotency key on
-// withdrawals — a retried call (e.g. after a network timeout) can double-send.
-// Callers should treat a timeout as "unknown outcome, check status/balance
-// before retrying" rather than blindly retrying this call.
-const withdraw = ({ externalUserId, asset = 'USDT', amount, toAddress }) =>
+// The gateway now supports an idempotency key: a retried call with the same
+// idempotencyKey AND the same externalUserId/asset/amount/toAddress replays
+// the original result instead of broadcasting a second transaction. Always
+// pass one — generate it once per withdrawal attempt on this side (e.g. the
+// Transaction._id or externalId already created before calling this) and
+// reuse the SAME value on any retry of that same logical withdrawal.
+const withdraw = ({ externalUserId, asset = 'USDT', amount, toAddress, idempotencyKey }) =>
   request('/api/celo/withdraw', {
     method: 'POST',
     body: {
@@ -111,6 +113,7 @@ const withdraw = ({ externalUserId, asset = 'USDT', amount, toAddress }) =>
       asset,
       amount,
       destination_address: toAddress,
+      idempotency_key: idempotencyKey,
     },
   });
 
