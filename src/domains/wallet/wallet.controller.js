@@ -33,6 +33,11 @@ const celoDeposit = asyncHandler(async (req, res) => {
   sendSuccess(res, { data: result });
 });
 
+const celoSync = asyncHandler(async (req, res) => {
+  const result = await service.syncCeloDeposit(req.user, req.query.asset);
+  sendSuccess(res, { data: result });
+});
+
 const celoWithdraw = asyncHandler(async (req, res) => {
   const result = await service.withdrawCelo(req.user, req.body);
   sendSuccess(res, {
@@ -54,4 +59,4 @@ const celoWebhook = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, ...result });
 });
 
-module.exports = { billOrder, cardLink, callback, celoDeposit, celoWithdraw, celoWebhook };
+module.exports = { billOrder, cardLink, callback, celoDeposit, celoSync, celoWithdraw, celoWebhook };

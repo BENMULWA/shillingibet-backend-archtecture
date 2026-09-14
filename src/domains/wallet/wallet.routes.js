@@ -42,6 +42,7 @@ router.post(
 );
 
 router.get('/celo/deposit', controller.celoDeposit);
+router.get('/celo/deposit/sync', depositLimiter, controller.celoSync);
 
 router.post(
   '/celo/withdraw',

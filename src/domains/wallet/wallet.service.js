@@ -555,6 +555,81 @@ const applyCeloDepositCredit = async (payload) => {
   return { ok: true, status: 'completed', transactionId: txn._id };
 };
 
+// Pull-based fallback for environments where Mamlaka's deposit.credited
+// webhook can't reach this backend (e.g. local dev — the webhook target is
+// configured on the gateway's partner record, not per-request from here).
+// Asks the gateway for this user's current custodial balance and credits
+// only the delta since the last sync, so it's safe to call repeatedly
+// (e.g. from the "I've sent it — check my balance" button) without
+// double-crediting an already-swept deposit.
+const syncCeloDeposit = async (user, asset = 'USDT') => {
+  const gatewayBalances = await mamlakaCelo.getBalance(user._id);
+  const gatewayBalance = Number(gatewayBalances?.balances?.[asset] ?? 0);
+
+  const freshUser = await User.findById(user._id).select('celoSweptBalances phone').lean();
+  if (!freshUser) throw ApiError.notFound('User not found');
+
+  const lastSwept = Number(freshUser.celoSweptBalances?.[asset] ?? 0);
+  const delta = Number((gatewayBalance - lastSwept).toFixed(8));
+
+  if (delta <= 0.000001) {
+    return { ok: true, credited: 0, asset, gatewayBalance };
+  }
+
+  const quote = await mamlakaCelo.getQuote({ amount: delta, from: asset, to: 'KES' });
+  const kesCredit = Number((quote.to_amount ?? delta * Number(quote.rate)).toFixed(2));
+
+  if (!kesCredit) {
+    return { ok: true, credited: 0, asset, status: 'no_kes_quote' };
+  }
+
+  // Optimistic guard on the last-known swept balance — if another sync (or
+  // the real webhook, once wired up) already advanced it, this no-ops
+  // instead of crediting the same delta twice. Field may be entirely absent
+  // on documents saved before this column existed, and Mongo's equality
+  // match against 0 doesn't count a missing field — so match on "absent or
+  // equal to lastSwept" rather than assuming it's always present.
+  const sweptField = `celoSweptBalances.${asset}`;
+  const matchesLastSwept =
+    lastSwept === 0
+      ? { $or: [{ [sweptField]: { $exists: false } }, { [sweptField]: 0 }] }
+      : { [sweptField]: lastSwept };
+
+  const updated = await User.findOneAndUpdate(
+    { _id: user._id, ...matchesLastSwept },
+    [
+      ...incWalletBalance('balance', kesCredit),
+      { $set: { [`celoSweptBalances.${asset}`]: gatewayBalance } },
+    ],
+    { new: true }
+  );
+
+  if (!updated) {
+    return { ok: true, credited: 0, asset, status: 'already_synced' };
+  }
+
+  const externalId = `celo-sync-${user._id}-${asset}-${Date.now()}`;
+  await Transaction.create({
+    user: user._id,
+    type: 'deposit',
+    status: 'completed',
+    amount: kesCredit,
+    currency: 'KES',
+    walletType: 'balance',
+    provider: 'Mamlaka Celo',
+    phone: freshUser.phone,
+    externalId,
+    receipt: externalId,
+    providerResponse: { source: 'manual-sync', asset, delta, gatewayBalance, quote },
+    completedAt: new Date(),
+    walletAppliedAt: new Date(),
+  });
+
+  logger.info('Celo deposit credited via sync', user._id, asset, delta, '->', kesCredit, 'KES');
+
+  return { ok: true, credited: kesCredit, asset, delta, balance: updated.balance };
+};
+
 const reconcileCeloWithdrawal = async (payload, event) => {
   const { txHash } = payload;
   if (!txHash) return { ok: true, handled: false };
@@ -596,6 +671,7 @@ module.exports = {
   createCardPaymentLink,
   getCeloDepositInstructions,
   withdrawCelo,
+  syncCeloDeposit,
   handleCeloWebhook,
   handleCallback,
   callbackUrl,

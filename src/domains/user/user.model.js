@@ -78,6 +78,15 @@ const userSchema = new mongoose.Schema(
     resetPassword: { type: resetPasswordSchema, default: () => ({}) },
     balance: { type: Number, default: 0, min: 0 },
     airtimeBalance: { type: Number, default: 0, min: 0 },
+    // Tracks how much of the Celo gateway's per-user custodial balance has
+    // already been swept into `balance`, so celo/deposit/sync can credit
+    // only the newly-arrived delta instead of double-crediting on repeat
+    // calls. Populated lazily — absent until the first sync for an asset.
+    celoSweptBalances: {
+      USDT: { type: Number, default: 0, min: 0 },
+      USDC: { type: Number, default: 0, min: 0 },
+      cUSD: { type: Number, default: 0, min: 0 },
+    },
     activeWallet: { type: String, enum: ['balance', 'airtime'], default: 'balance' },
     status: { type: String, enum: ['active', 'suspended'], default: 'active' },
   },
