@@ -55,4 +55,12 @@ const celoWithdraw = z.object({
   asset: z.enum(['cUSD', 'USDC', 'USDT']).optional(),
 });
 
-module.exports = { billOrder, cardLink, callback, celoWithdraw };
+const testCredit = z.object({
+  amount: z.coerce
+    .number()
+    .positive('Amount must be greater than zero')
+    .max(1_000_000, 'Amount is unreasonably large for a test credit'),
+  walletType: z.enum(['balance', 'airtime']).optional(),
+});
+
+module.exports = { billOrder, cardLink, callback, celoWithdraw, testCredit };

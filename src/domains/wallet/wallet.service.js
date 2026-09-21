@@ -212,6 +212,52 @@ const createCardPaymentLink = async (user, payload) => {
 const getCeloDepositInstructions = (user, asset = 'USDT') =>
   mamlakaCelo.getDepositInstructions(user._id, asset);
 
+// Dev/staging-only shortcut to fund a wallet for manual testing without
+// running a real payment through Mamlaka/TransactPay/the Celo gateway.
+// Hard-disabled whenever NODE_ENV=production so it can never be used to
+// mint free money on the live site — only local dev and this staging box
+// (which itself runs in development mode) can reach it.
+const testCreditWallet = async (user, { amount, walletType = 'balance' }) => {
+  if (config.isProd) {
+    throw ApiError.forbidden('Test credit is disabled in production');
+  }
+
+  const creditAmount = Number(Number(amount).toFixed(2));
+  const externalId = `TEST-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+
+  const updated = await User.findOneAndUpdate(
+    { _id: user._id },
+    incWalletBalance(walletType, creditAmount),
+    { new: true }
+  ).lean();
+  if (!updated) throw ApiError.notFound('User not found');
+
+  await Transaction.create({
+    user: user._id,
+    type: 'deposit',
+    status: 'completed',
+    amount: creditAmount,
+    currency: 'KES',
+    walletType: normalizeWalletType(walletType),
+    provider: 'test-credit',
+    phone: user.phone,
+    externalId,
+    receipt: externalId,
+    completedAt: new Date(),
+    walletAppliedAt: new Date(),
+  });
+
+  logger.info('Test credit applied', user._id, walletType, creditAmount);
+
+  return {
+    ok: true,
+    credited: creditAmount,
+    walletType: normalizeWalletType(walletType),
+    balance: updated.balance,
+    airtimeBalance: updated.airtimeBalance,
+  };
+};
+
 const withdrawCelo = async (user, payload) => {
   const asset = payload.asset || 'USDT';
   const usdcAmount = Number(payload.amount);
@@ -672,6 +718,7 @@ module.exports = {
   getCeloDepositInstructions,
   withdrawCelo,
   syncCeloDeposit,
+  testCreditWallet,
   handleCeloWebhook,
   handleCallback,
   callbackUrl,

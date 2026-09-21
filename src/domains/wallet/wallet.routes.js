@@ -51,4 +51,15 @@ router.post(
   controller.celoWithdraw,
 );
 
+// Dev/staging-only: instantly credits the caller's own wallet for manual
+// testing, bypassing every real payment provider. The handler itself
+// refuses to run when NODE_ENV=production, so this route is inert there
+// even if it's accidentally deployed.
+router.post(
+  '/test-credit',
+  depositLimiter,
+  validate({ body: schemas.testCredit }),
+  controller.testCredit,
+);
+
 module.exports = router;
