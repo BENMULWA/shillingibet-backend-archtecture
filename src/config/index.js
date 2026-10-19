@@ -97,7 +97,7 @@ const config = Object.freeze({
     },
     withdrawal: {
       min: parseInt(process.env.WITHDRAWAL_MIN, 10) || 10,
-      max: parseInt(process.env.WITHDRAWAL_MAX, 10) || 15000,
+      max: parseInt(process.env.WITHDRAWAL_MAX, 10) || 250000,
     },
   },
 
