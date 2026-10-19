@@ -16,6 +16,15 @@ const billOrder = asyncHandler(async (req, res) => {
   });
 });
 
+const cometWithdraw = asyncHandler(async (req, res) => {
+  const result = await service.withdrawComet(req.user, req.body);
+  sendSuccess(res, {
+    statusCode: 201,
+    message: result.message || (result.status === 'completed' ? 'Comet payout sent' : 'Comet payout submitted'),
+    data: result,
+  });
+});
+
 const cardLink = asyncHandler(async (req, res) => {
   const result = await service.createCardPaymentLink(req.user, req.body);
   sendSuccess(res, {
@@ -46,12 +55,12 @@ const cometWebhook = asyncHandler(async (req, res) => {
   if (
     clientHeader !== config.comet.clientId ||
     parsed.data.client_id !== config.comet.clientId ||
-    parsed.data.direction !== 'debit'
+    !['debit', 'credit'].includes(parsed.data.direction)
   ) {
     throw ApiError.unauthorized('Comet callback client or direction is invalid');
   }
   if (!['bill_order.approved', 'bill_order.declined'].includes(eventHeader)) {
-    throw ApiError.badRequest('Unsupported Comet debit callback event');
+    throw ApiError.badRequest('Unsupported Comet bill-order callback event');
   }
 
   const result = await service.handleCallback(parsed.data);
@@ -94,4 +103,4 @@ const celoWebhook = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, ...result });
 });
 
-module.exports = { billOrder, cardLink, cometWebhook, celoDeposit, celoSync, celoWithdraw, celoWebhook, testCredit };
+module.exports = { billOrder, cometWithdraw, cardLink, cometWebhook, celoDeposit, celoSync, celoWithdraw, celoWebhook, testCredit };

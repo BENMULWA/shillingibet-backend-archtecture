@@ -19,6 +19,13 @@ router.post(
 );
 
 router.post(
+  '/comet/withdraw',
+  withdrawalLimiter,
+  validate({ body: schemas.cometWithdraw }),
+  controller.cometWithdraw,
+);
+
+router.post(
   '/card-link',
   depositLimiter,
   validate({ body: schemas.cardLink }),

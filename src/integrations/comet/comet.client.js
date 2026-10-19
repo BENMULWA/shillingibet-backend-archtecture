@@ -50,7 +50,9 @@ const request = async (path, { method = 'POST', body } = {}) => {
   if (!res.ok) {
     const message = data.message || data.error || 'Comet request failed';
     logger.error('Comet request failed', path, res.status, data);
-    throw new ApiError(502, message, data);
+    const error = new ApiError(502, message, data);
+    error.providerStatus = res.status;
+    throw error;
   }
 
   return data;
@@ -59,4 +61,7 @@ const request = async (path, { method = 'POST', body } = {}) => {
 const createBillOrder = (payload) =>
   request('/bill-orders/external', { body: payload });
 
-module.exports = { createBillOrder, createAuthHeaders };
+const createCreditOrder = (payload) =>
+  request('/bill-orders/external', { body: payload });
+
+module.exports = { createBillOrder, createCreditOrder, createAuthHeaders };

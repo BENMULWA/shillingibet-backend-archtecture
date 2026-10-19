@@ -10,6 +10,7 @@ const loadService = ({ providerResponse, providerError, transaction = null } = {
   const originalLoad = Module._load;
   const state = {
     providerPayload: null,
+    creditPayload: null,
     createdTransactions: [],
     walletUpdates: [],
   };
@@ -37,6 +38,11 @@ const loadService = ({ providerResponse, providerError, transaction = null } = {
           state.providerPayload = payload;
           if (providerError) throw providerError;
           return providerResponse || { id: 'comet-1', checkout_url: 'https://pay.example/1' };
+        },
+        createCreditOrder: async (payload) => {
+          state.creditPayload = payload;
+          if (providerError) throw providerError;
+          return providerResponse || { status: 'success', order: { ID: 77, status: 'completed' } };
         },
       };
     }
@@ -94,8 +100,12 @@ const loadService = ({ providerResponse, providerError, transaction = null } = {
 
     if (request === '../user/user.model' && parent?.filename === servicePath) {
       return {
+        findOneAndUpdate: (query, update) => {
+          state.walletUpdates.push({ query, update, operation: 'findOneAndUpdate' });
+          return { lean: async () => ({ _id: query._id, balance: 90 }) };
+        },
         updateOne: async (query, update) => {
-          state.walletUpdates.push({ query, update });
+          state.walletUpdates.push({ query, update, operation: 'updateOne' });
           return { matchedCount: 1 };
         },
       };
@@ -112,6 +122,10 @@ const loadService = ({ providerResponse, providerError, transaction = null } = {
         },
         normalizeWalletType(walletType) {
           return walletType === 'airtime' ? 'airtime' : 'balance';
+        },
+        walletBalanceQuery(walletType, amount) {
+          const field = walletType === 'airtime' ? 'airtimeBalance' : 'balance';
+          return { [field]: { $gte: amount } };
         },
         withTransaction: async (txnFn) => txnFn('session-1'),
       };
@@ -420,4 +434,86 @@ test('handleCallback credits an approved Comet order even after the user takes t
   assert.equal(result.status, 'completed');
   assert.equal(state.walletUpdates.length, 1);
   assert.equal(txn.status, 'completed');
+});
+
+test('withdrawComet reserves the main balance and submits a credit order', async () => {
+  const { service, state } = loadService({
+    providerResponse: { status: 'success', order: { ID: 77, status: 'completed' } },
+  });
+
+  const result = await service.withdrawComet(
+    { _id: 'user-1', phone: '254700000002' },
+    { amount: 10, email: 'player@example.com' }
+  );
+
+  assert.equal(result.status, 'completed');
+  assert.equal(state.creditPayload.direction, 'credit');
+  assert.equal(state.creditPayload.amount, 10);
+  assert.equal(state.creditPayload.email, 'player@example.com');
+  assert.equal(state.createdTransactions[0].provider, 'Comet');
+  assert.equal(state.createdTransactions[0].type, 'withdrawal');
+  assert.equal(state.createdTransactions[0].secureId, '77');
+  assert.equal(state.walletUpdates[0].query.balance.$gte, 10);
+  assert.equal(state.walletUpdates[0].update[0].$set.balance.$round[0].$add[1], -10);
+});
+
+test('withdrawComet refunds the wallet when Comet explicitly declines a payout', async () => {
+  const { service, state } = loadService({
+    providerResponse: { status: 'declined', message: 'Settlement balance unavailable' },
+  });
+
+  const result = await service.withdrawComet(
+    { _id: 'user-1', phone: '254700000002' },
+    { amount: 10, email: 'player@example.com' }
+  );
+
+  assert.equal(result.status, 'failed');
+  assert.equal(state.walletUpdates.length, 2);
+  assert.equal(state.walletUpdates[1].update[0].$set.balance.$round[0].$add[1], 10);
+  assert.equal(state.createdTransactions[0].status, 'failed');
+});
+
+test('withdrawComet leaves the balance reserved when provider outcome is ambiguous', async () => {
+  const { service, state } = loadService({ providerError: new Error('socket timed out') });
+
+  const result = await service.withdrawComet(
+    { _id: 'user-1', phone: '254700000002' },
+    { amount: 10, email: 'player@example.com' }
+  );
+
+  assert.equal(result.status, 'pending');
+  assert.equal(state.walletUpdates.length, 1);
+  assert.match(state.createdTransactions[0].failureReason, /requires reconciliation/);
+});
+
+test('handleCallback refunds a declined Comet credit withdrawal once', async () => {
+  const txn = {
+    _id: 'txn-withdrawal',
+    user: 'user-1',
+    type: 'withdrawal',
+    provider: 'Comet',
+    amount: 10,
+    currency: 'KES',
+    walletType: 'balance',
+    externalId: 'COMET-WDR-1',
+    status: 'pending',
+    walletAppliedAt: null,
+    async save() {},
+  };
+  const { service, state } = loadService({ transaction: txn });
+
+  const result = await service.handleCallback({
+    direction: 'credit',
+    event: 'bill_order.declined',
+    external_ref: 'COMET-WDR-1',
+    amount: 10,
+    currency: 'KES',
+    status: 'declined',
+  });
+
+  assert.equal(result.status, 'failed');
+  assert.equal(txn.status, 'failed');
+  assert.equal(txn.walletAppliedAt instanceof Date, true);
+  assert.equal(state.walletUpdates.length, 1);
+  assert.equal(state.walletUpdates[0].update[0].$set.balance.$round[0].$add[1], 10);
 });

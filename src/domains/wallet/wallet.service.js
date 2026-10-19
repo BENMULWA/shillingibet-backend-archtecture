@@ -94,6 +94,107 @@ const createBillOrder = async (user, payload) => {
   }
 };
 
+const withdrawComet = async (user, { amount, email }) => {
+  const payoutEmail = String(email || '').trim();
+  const payoutAmount = Number(Number(amount).toFixed(2));
+  const externalId = makeRef('COMET-WDR');
+  const debited = await User.findOneAndUpdate(
+    { _id: user._id, ...walletBalanceQuery('balance', payoutAmount) },
+    incWalletBalance('balance', -payoutAmount),
+    { new: true }
+  ).lean();
+
+  if (!debited) throw ApiError.badRequest('Insufficient main wallet balance');
+
+  let txn;
+  try {
+    txn = await Transaction.create({
+      user: user._id,
+      type: 'withdrawal',
+      amount: payoutAmount,
+      currency: config.comet.currency,
+      walletType: 'balance',
+      provider: 'Comet',
+      phone: user.phone,
+      externalId,
+      walletAppliedAt: new Date(),
+    });
+  } catch (error) {
+    await User.updateOne({ _id: user._id }, incWalletBalance('balance', payoutAmount));
+    throw error;
+  }
+
+  const refundAndFail = async (reason, providerResponse = null) => {
+    const processedAt = new Date();
+    await User.updateOne({ _id: user._id }, incWalletBalance('balance', payoutAmount));
+    txn.status = 'failed';
+    txn.failureReason = reason;
+    txn.providerResponse = providerResponse;
+    txn.completedAt = processedAt;
+    txn.walletAppliedAt = processedAt;
+    await txn.save();
+    return { ok: true, status: 'failed', transaction: txn.toJSON() };
+  };
+
+  let providerResponse;
+  try {
+    providerResponse = await comet.createCreditOrder({
+      direction: 'credit',
+      amount: payoutAmount,
+      currency: config.comet.currency,
+      comment: `ShilingiBet wallet withdrawal ${externalId}`,
+      email: payoutEmail,
+      description: `ShilingiBet withdrawal ${externalId}`,
+      external_ref: externalId,
+    });
+  } catch (error) {
+    if (error.statusCode === 503 || (error.providerStatus >= 400 && error.providerStatus < 500)) {
+      await refundAndFail(error.message);
+      throw error;
+    }
+
+    txn.failureReason = `Comet payout outcome requires reconciliation: ${error.message}`;
+    await txn.save();
+    logger.warn('Comet payout outcome is unknown; balance remains reserved', externalId, error.message);
+    return {
+      ok: true,
+      status: 'pending',
+      message: 'Payout status is being confirmed. Do not submit another withdrawal.',
+      transaction: txn.toJSON(),
+    };
+  }
+
+  const order = getCometOrder(providerResponse);
+  const status = mapStatus(
+    order?.status || providerResponse.transaction_status || providerResponse.status
+  );
+  const processedAt = status === 'pending' ? null : new Date();
+  txn.providerResponse = providerResponse;
+  txn.rawCallback = providerResponse;
+  txn.secureId = order?.ID != null ? String(order.ID) : order?.id != null ? String(order.id) : null;
+  txn.receipt = order?.comment_ref || order?.receipt || null;
+  txn.status = status;
+
+  if (status === 'failed') {
+    txn.failureReason = order?.reason || providerResponse.message || 'Comet rejected the payout';
+    await User.updateOne({ _id: user._id }, incWalletBalance('balance', payoutAmount));
+    txn.completedAt = processedAt;
+    txn.walletAppliedAt = processedAt;
+  } else if (status === 'completed') {
+    txn.completedAt = processedAt;
+  }
+
+  await txn.save();
+  logger.info('Comet wallet payout processed', externalId, status, payoutAmount);
+
+  return {
+    ok: true,
+    status,
+    message: status === 'pending' ? 'Payout is being processed.' : undefined,
+    transaction: txn.toJSON(),
+  };
+};
+
 const splitName = (name = '') => {
   const cleaned = String(name || '').trim();
   if (!cleaned) return { firstName: null, lastName: null };
@@ -324,10 +425,11 @@ const withdrawCelo = async (user, payload) => {
 };
 
 const findCallbackTransaction = async (payload, session) => {
+  const transactionType = payload.direction === 'credit' ? 'withdrawal' : 'deposit';
   const query = payload.external_ref
-    ? { externalId: payload.external_ref, provider: 'Comet', type: 'deposit' }
+    ? { externalId: payload.external_ref, provider: 'Comet', type: transactionType }
     : payload.order_id != null
-      ? { secureId: String(payload.order_id), provider: 'Comet', type: 'deposit' }
+      ? { secureId: String(payload.order_id), provider: 'Comet', type: transactionType }
       : null;
 
   if (!query) return null;
@@ -369,7 +471,9 @@ const buildCallbackUpdate = (status, payload, processedAt, walletAppliedAt = nul
   walletAppliedAt,
 });
 
-const shouldApplyToWallet = (txn, status) => txn.type === 'deposit' && status === 'completed';
+const shouldApplyToWallet = (txn, status) =>
+  (txn.type === 'deposit' && status === 'completed') ||
+  (txn.type === 'withdrawal' && status === 'failed');
 
 const handleCallbackInSession = async (session, payload, status) => {
   const txn = await findCallbackTransaction(payload, session);
@@ -385,18 +489,32 @@ const handleCallbackInSession = async (session, payload, status) => {
   const appliesToWallet = shouldApplyToWallet(txn, status);
 
   if (appliesToWallet) {
-    const wallet = await User.updateOne({ _id: txn.user }, incWalletBalance(txn.walletType, txn.amount), { session });
+    const wallet = await User.updateOne(
+      { _id: txn.user },
+      incWalletBalance(txn.walletType, txn.amount),
+      { session }
+    );
     if (wallet.matchedCount !== 1) throw new Error(`Wallet user not found for ${txn.externalId}`);
     txn.walletAppliedAt = processedAt;
   }
 
-  Object.assign(txn, buildCallbackUpdate(status, payload, processedAt, txn.walletAppliedAt));
+  Object.assign(
+    txn,
+    buildCallbackUpdate(
+      status,
+      payload,
+      processedAt,
+      appliesToWallet ? processedAt : txn.walletAppliedAt
+    )
+  );
   if (payload.order_id != null) txn.secureId = String(payload.order_id);
   if (payload.comment_ref) txn.receipt = payload.comment_ref;
   await txn.save({ session });
 
   logger.info(
-    appliesToWallet ? 'Comet deposit credited' : 'Comet callback processed',
+    appliesToWallet
+      ? txn.type === 'deposit' ? 'Comet deposit credited' : 'Comet payout refunded'
+      : 'Comet callback processed',
     txn.externalId,
     status
   );
@@ -420,7 +538,7 @@ const handleCallbackCompensating = async (payload, status) => {
     status,
     payload,
     processedAt,
-    appliesToWallet ? processedAt : null
+    appliesToWallet ? processedAt : txn.walletAppliedAt
   );
 
   if (payload.order_id != null) update.secureId = String(payload.order_id);
@@ -444,7 +562,9 @@ const handleCallbackCompensating = async (payload, status) => {
   }
 
   logger.info(
-    appliesToWallet ? 'Comet deposit credited' : 'Comet callback processed',
+    appliesToWallet
+      ? txn.type === 'deposit' ? 'Comet deposit credited' : 'Comet payout refunded'
+      : 'Comet callback processed',
     txn.externalId,
     status
   );
@@ -660,6 +780,7 @@ const handleCeloWebhook = async (payload) => {
 
 module.exports = {
   createBillOrder,
+  withdrawComet,
   createCardPaymentLink,
   getCeloDepositInstructions,
   withdrawCelo,

@@ -226,6 +226,19 @@ Comet `.env` values:
 
 Comet `credit` orders are a separate payout flow: they immediately credit a Comet user's account and must only be used when ShilingiBet has a funded Comet settlement balance. The player-deposit endpoint in this codebase intentionally only creates debit orders.
 
+### Comet wallet withdrawals
+
+`POST /wallet/comet/withdraw` is an authenticated wallet payout endpoint. Send the amount in KES and the email registered to the player's Comet account:
+
+```json
+{
+  "amount": 10,
+  "email": "player@example.com"
+}
+```
+
+The backend atomically reserves the amount from the main wallet before submitting a signed Comet credit order to `POST /bill-orders/external`. A confirmed provider rejection refunds the reservation. A pending or ambiguous provider result keeps the withdrawal pending and reserved; reconcile it with Comet before retrying to prevent duplicate payouts. The Comet settlement account must be funded before enabling this flow in production.
+
 ## Virtual betting (EuroVirtuals / BetKraft)
 
 Virtual games use a **seamless (transfer) wallet**: the provider calls back into Betnare to read the player balance and to debit/credit/rollback as the player plays. The Betnare wallet remains the single source of truth.

@@ -17,6 +17,14 @@ const billOrder = z.object({
   walletType: z.enum(['balance', 'airtime']).optional(),
 });
 
+const cometWithdraw = z.object({
+  amount: z.coerce
+    .number()
+    .min(config.limits.withdrawal.min, `Minimum withdrawal is ${config.limits.withdrawal.min}`)
+    .max(config.limits.withdrawal.max, `Maximum withdrawal is ${config.limits.withdrawal.max}`),
+  email: z.string().trim().email(),
+});
+
 const cardLink = z.object({
   amount: z.coerce
     .number()
@@ -66,4 +74,4 @@ const testCredit = z.object({
   walletType: z.enum(['balance', 'airtime']).optional(),
 });
 
-module.exports = { billOrder, cardLink, callback, celoWithdraw, testCredit };
+module.exports = { billOrder, cometWithdraw, cardLink, callback, celoWithdraw, testCredit };
