@@ -3,6 +3,7 @@
 const asyncHandler = require('../../utils/asyncHandler');
 const { sendSuccess } = require('../../utils/response');
 const ApiError = require('../../utils/ApiError');
+const logger = require('../../utils/logger');
 const config = require('../../config');
 const service = require('./wallet.service');
 const schemas = require('./wallet.validation');
@@ -48,15 +49,21 @@ const cometWebhook = asyncHandler(async (req, res) => {
   }
 
   const eventHeader = req.get('X-Comet-Event');
-  const clientHeader = req.get('X-Comet-Client');
   if (!eventHeader || eventHeader !== parsed.data.event) {
     throw ApiError.badRequest('Comet callback event header does not match payload');
   }
   if (
-    clientHeader !== config.comet.clientId ||
     parsed.data.client_id !== config.comet.clientId ||
     !['debit', 'credit'].includes(parsed.data.direction)
   ) {
+    logger.warn('Comet callback client/direction rejected', {
+      path: req.originalUrl,
+      expectedClientId: config.comet.clientId,
+      payloadClientId: parsed.data.client_id,
+      direction: parsed.data.direction,
+      headerClientId: req.get('X-Comet-Client'),
+      event: parsed.data.event,
+    });
     throw ApiError.unauthorized('Comet callback client or direction is invalid');
   }
   if (!['bill_order.approved', 'bill_order.declined'].includes(eventHeader)) {

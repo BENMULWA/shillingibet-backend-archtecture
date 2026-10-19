@@ -67,7 +67,7 @@ const config = Object.freeze({
   },
 
   comet: {
-    clientId: process.env.COMET_CLIENT_ID || 'shilingi_bet',
+    clientId: process.env.COMET_CLIENT_ID || 'shillingi_bet',
     baseUrl: (process.env.COMET_BASE_URL || 'https://cometapi.mamlakapsp.com/api/v1').replace(/\/$/, ''),
     apiKey: process.env.COMET_API_KEY || '',
     apiSecret: process.env.COMET_API_SECRET || '',

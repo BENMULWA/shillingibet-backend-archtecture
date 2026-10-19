@@ -214,7 +214,7 @@ Example Comet response:
 ```
 
 Comet `.env` values:
-- `COMET_CLIENT_ID` — Comet integration client ID (defaults to `shilingi_bet`)
+- `COMET_CLIENT_ID` — Comet integration client ID (defaults to `shillingi_bet`)
 - `COMET_BASE_URL` — Comet API base URL
 - `COMET_API_KEY` — required API key, sent in `COMET_API_KEY_HEADER`
 - `COMET_API_SECRET` — required request-signing secret; never send it over the wire
