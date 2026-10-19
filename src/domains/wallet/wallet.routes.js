@@ -1,0 +1,49 @@
+'use strict';
+
+const { Router } = require('express');
+const { authenticate } = require('../../middlewares/auth');
+const validate = require('../../middlewares/validate');
+const { depositLimiter, withdrawalLimiter } = require('../../middlewares/rateLimiter');
+const controller = require('./wallet.controller');
+const schemas = require('./wallet.validation');
+
+const router = Router();
+
+router.use(authenticate);
+
+router.post(
+  '/billOrder',
+  depositLimiter,
+  validate({ body: schemas.billOrder }),
+  controller.billOrder,
+);
+
+router.post(
+  '/card-link',
+  depositLimiter,
+  validate({ body: schemas.cardLink }),
+  controller.cardLink,
+);
+
+router.get('/celo/deposit', controller.celoDeposit);
+router.get('/celo/deposit/sync', depositLimiter, controller.celoSync);
+
+router.post(
+  '/celo/withdraw',
+  withdrawalLimiter,
+  validate({ body: schemas.celoWithdraw }),
+  controller.celoWithdraw,
+);
+
+// Dev/staging-only: instantly credits the caller's own wallet for manual
+// testing, bypassing every real payment provider. The handler itself
+// refuses to run when NODE_ENV=production, so this route is inert there
+// even if it's accidentally deployed.
+router.post(
+  '/test-credit',
+  depositLimiter,
+  validate({ body: schemas.testCredit }),
+  controller.testCredit,
+);
+
+module.exports = router;
