@@ -13,7 +13,7 @@ async function start() {
 
   server = http.createServer(app);
   server.listen(config.port, () => {
-    logger.info(`Betnare API listening on port ${config.port} [${config.env}]`);
+    logger.info(`Bingwake API listening on port ${config.port} [${config.env}]`);
     logger.info(`Base URL: http://localhost:${config.port}${config.apiPrefix}`);
   });
 }

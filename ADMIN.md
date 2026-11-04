@@ -1,6 +1,6 @@
-# Betnare Admin API
+# Bingwake Admin API
 
-Admin operations for managing the Betnare platform. This guide covers the protected routes that require an account with the `admin` role.
+Admin operations for managing the Bingwake platform. This guide covers the protected routes that require an account with the `admin` role.
 
 ## Stack
 

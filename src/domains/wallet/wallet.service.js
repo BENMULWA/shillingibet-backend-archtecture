@@ -60,7 +60,7 @@ const createBillOrder = async (user, payload) => {
     currency,
     comment: payload.comment || externalRef,
     email,
-    description: payload.description || `Betnare wallet deposit ${externalRef}`,
+    description: payload.description || `Bingwake wallet deposit ${externalRef}`,
     external_ref: externalRef,
     callback_url: payload.callback_url || callbackUrl(),
   };
@@ -256,7 +256,7 @@ const createCardPaymentLink = async (user, payload) => {
   }
 
   const inferredName = splitName(user.name);
-  const firstName = payload.first_name || inferredName.firstName || 'Betnare';
+  const firstName = payload.first_name || inferredName.firstName || 'Bingwake';
   const lastName = payload.last_name || inferredName.lastName || 'Customer';
   const externalRef = payload.external_ref || makeCardRef();
   const redirectUrl = payload.redirect_url || config.transactpay.redirectUrl;
@@ -274,7 +274,7 @@ const createCardPaymentLink = async (user, payload) => {
     order: {
       amount: payload.amount,
       reference: externalRef,
-      description: payload.description || `Betnare wallet card deposit ${externalRef}`,
+      description: payload.description || `Bingwake wallet card deposit ${externalRef}`,
       currency,
     },
     payment: {

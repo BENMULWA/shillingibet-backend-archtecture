@@ -1,4 +1,4 @@
-# Betnare API
+# Bingwake API
 
 Betting platform REST API built with Express and MongoDB (Mongoose), organised by domain.
 
@@ -116,10 +116,10 @@ Deposits and withdrawals run through the [Mamlaka mobile-money API](https://gith
 
 **Withdrawal (payout / B2C / airtime)**
 1. `POST /transactions/withdraw { amount, phone, provider?, walletType? }`
-2. If `walletType` is `balance` or omitted, Betnare debits the KES wallet and calls Mamlaka transfer payout.
-3. If `walletType` is `airtime`, Betnare checks `airtimeBalance`, debits it atomically, and calls Mamlaka airtime disbursement.
+2. If `walletType` is `balance` or omitted, Bingwake debits the KES wallet and calls Mamlaka transfer payout.
+3. If `walletType` is `airtime`, Bingwake checks `airtimeBalance`, debits it atomically, and calls Mamlaka airtime disbursement.
 4. For cash payouts, Mamlaka calls `POST /callbacks/mamlaka`. On `FAILED` the debit is refunded automatically.
-5. For airtime payouts, Betnare uses the immediate Mamlaka response:
+5. For airtime payouts, Bingwake uses the immediate Mamlaka response:
    - `success` => transaction `completed`
    - `failed` => transaction `failed` and the airtime wallet is refunded
    - `pending` => transaction stays `pending`
@@ -155,11 +155,11 @@ Comet bill orders create a **debit** order addressed to the player's Comet accou
 }
 ```
 
-- `email` is optional only if the authenticated Betnare account already has one saved.
-- If `external_ref` is omitted, Betnare generates a unique `COMET-...` reference.
+- `email` is optional only if the authenticated Bingwake account already has one saved.
+- If `external_ref` is omitted, Bingwake generates a unique `COMET-...` reference.
 - ShilingiBet always supplies `direction: "debit"` and its callback URL: `POST /api/v1/webhooks/comet`.
 - The route proxies to Comet `POST /bill-orders/external` using `COMET_BASE_URL` and returns both the internal `transaction` and the raw `provider` response.
-- Betnare understands Comet's nested response shape and stores:
+- Bingwake understands Comet's nested response shape and stores:
   `order.ID` as `transaction.secureId`,
   `order.external_ref` as `transaction.externalId`,
   `order.comment_ref` as `transaction.receipt`.
@@ -241,7 +241,7 @@ The backend atomically reserves the amount from the main wallet before submittin
 
 ## Virtual betting (EuroVirtuals / BetKraft)
 
-Virtual games use a **seamless (transfer) wallet**: the provider calls back into Betnare to read the player balance and to debit/credit/rollback as the player plays. The Betnare wallet remains the single source of truth.
+Virtual games use a **seamless (transfer) wallet**: the provider calls back into Bingwake to read the player balance and to debit/credit/rollback as the player plays. The Bingwake wallet remains the single source of truth.
 
 **Operator → Provider** (authenticated, in [src/integrations/eurovirtuals/eurovirtuals.client.js](src/integrations/eurovirtuals/eurovirtuals.client.js)):
 
@@ -271,13 +271,13 @@ Virtual games use a **seamless (transfer) wallet**: the provider calls back into
 - All callbacks return **HTTP 200** regardless of outcome (the body carries `status_code`); any non-200 makes the provider treat the request as undelivered and retry.
 - Every wallet mutation is idempotent on `(bet_id, action)` and uses a `$round` aggregation-pipeline update so decimal payouts never drift.
 - `/virtuals/win` accepts payout values from both the top-level body and nested `data` payloads (`payout_amount`, `amount`, `payout`, `won_amount`).
-- If a win callback arrives with `payout_amount: 0` and no alternate positive payout value, Betnare treats it as a provider payload issue and does not credit the wallet.
-- If a `/virtuals/win` callback fails auth but includes a known `bet_id`, Betnare now attempts a background provider reconciliation by `bet_id` and `game_uuid`. Any recovered positive payout is still applied through the same idempotent `result_bet` path, so the same bet cannot be credited twice.
-- `player_id` = the Betnare user `_id`; `player_token` = a short-lived `VirtualSession` issued at launch.
+- If a win callback arrives with `payout_amount: 0` and no alternate positive payout value, Bingwake treats it as a provider payload issue and does not credit the wallet.
+- If a `/virtuals/win` callback fails auth but includes a known `bet_id`, Bingwake now attempts a background provider reconciliation by `bet_id` and `game_uuid`. Any recovered positive payout is still applied through the same idempotent `result_bet` path, so the same bet cannot be credited twice.
+- `player_id` = the Bingwake user `_id`; `player_token` = a short-lived `VirtualSession` issued at launch.
 - Config: `EUROVIRTUALS_API_KEY`, `EUROVIRTUALS_APP_KEY`, `EUROVIRTUALS_BASE_URL`, `EUROVIRTUALS_VERIFY_CALLBACKS` (set `false` only for local testing).
 
 **Troubleshooting**
-- If Aviator credits correctly but sports virtual wins do not, inspect the `/virtuals/win` callback logs first. A successful HTTP 200 only means the callback reached Betnare; the response body `status_code` still determines whether the wallet credit was accepted.
+- If Aviator credits correctly but sports virtual wins do not, inspect the `/virtuals/win` callback logs first. A successful HTTP 200 only means the callback reached Bingwake; the response body `status_code` still determines whether the wallet credit was accepted.
 - Signature failures are logged by [src/middlewares/verifyEurovirtuals.js](src/middlewares/verifyEurovirtuals.js) with the callback `path`, `timestamp`, `body_keys`, and detected payout fields.
 - Accepted `/virtuals/win` requests are logged by [src/domains/virtual/virtual.controller.js](src/domains/virtual/virtual.controller.js), including payout debug values, so provider payload mismatches can be compared between games.
 
@@ -295,7 +295,7 @@ Accounts use **phone + password**. Registration requires only `phone` and `passw
 
 ## SMS notifications and password reset
 
-Betnare can send SMS through the Celcom Africa gateway for:
+Bingwake can send SMS through the Celcom Africa gateway for:
 
 - phone verification codes on signup
 - first-time signup welcome messages

@@ -1,7 +1,7 @@
 {
   "name": "betnare",
   "version": "1.0.0",
-  "description": "Betnare — a betting platform API built with Express and MongoDB",
+  "description": "Bingwake — a betting platform API built with Express and MongoDB",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
