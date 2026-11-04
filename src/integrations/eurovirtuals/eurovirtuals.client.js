@@ -81,4 +81,53 @@ const initiateShortcode = ({ channel = 'ussd', gameUuid, playerId, playerName, c
   });
 };
 
-module.exports = { listGames, launchGame, getBetStatus, initiateShortcode };
+const createFreeBetCampaign = (body) =>
+  send('POST', '/v1/freebet/campaigns', { body });
+
+const listFreeBetCampaigns = ({ gameUuid, status, page, perPage } = {}) => {
+  const sign = {};
+  if (gameUuid) sign.game_uuid = String(gameUuid);
+  if (status) sign.status = String(status);
+  if (page) sign.page = String(page);
+  if (perPage) sign.per_page = String(perPage);
+  const qs = new URLSearchParams(sign).toString();
+  return send('GET', `/v1/freebet/campaigns${qs ? `?${qs}` : ''}`, { sign });
+};
+
+const getFreeBetCampaign = (campaignId) =>
+  send('GET', `/v1/freebet/campaigns/${encodeURIComponent(campaignId)}`, { sign: {} });
+
+const updateFreeBetCampaignStatus = (campaignId, body) =>
+  send('PATCH', `/v1/freebet/campaigns/${encodeURIComponent(campaignId)}/status`, { body });
+
+const awardFreeBets = (campaignId, body) =>
+  send('POST', `/v1/freebet/campaigns/${encodeURIComponent(campaignId)}/awards`, { body });
+
+const listFreeBetAwards = ({ campaignId, playerId, status, page, perPage } = {}) => {
+  const sign = {};
+  if (campaignId) sign.campaign_id = String(campaignId);
+  if (playerId) sign.player_id = String(playerId);
+  if (status) sign.status = String(status);
+  if (page) sign.page = String(page);
+  if (perPage) sign.per_page = String(perPage);
+  const qs = new URLSearchParams(sign).toString();
+  return send('GET', `/v1/freebet/awards${qs ? `?${qs}` : ''}`, { sign });
+};
+
+const revokeFreeBet = (freeBetId, body) =>
+  send('POST', `/v1/freebet/awards/${encodeURIComponent(freeBetId)}/revoke`, { body });
+
+module.exports = {
+  listGames,
+  launchGame,
+  getBetStatus,
+  initiateShortcode,
+  createFreeBetCampaign,
+  listFreeBetCampaigns,
+  getFreeBetCampaign,
+  updateFreeBetCampaignStatus,
+  awardFreeBets,
+  listFreeBetAwards,
+  revokeFreeBet,
+};
+

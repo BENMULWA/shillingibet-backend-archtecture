@@ -122,7 +122,7 @@ const register = async ({ phone, password, name, email, referralCode }) => {
 
 const login = async ({ phone, password }) => {
   const user = await User.findOne({ phone: normalizePhone(phone) }).select('+password');
-  if (!user || !(await user.comparePassword(password))) {
+  if (!user || user.deletedAt || !(await user.comparePassword(password))) {
     throw ApiError.unauthorized('Invalid phone or password');
   }
   if (user.status !== 'active') throw ApiError.forbidden('Account is suspended');

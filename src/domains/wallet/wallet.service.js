@@ -44,6 +44,7 @@ const mapStatus = (raw) => {
 };
 
 const createBillOrder = async (user, payload) => {
+  if (user.depositPaused) throw ApiError.forbidden('Deposits are paused on this account');
   const email = payload.email || user.email;
   if (!email) {
     throw ApiError.badRequest('Email is required for Comet bill-order deposits');
@@ -104,6 +105,7 @@ const createBillOrder = async (user, payload) => {
 };
 
 const withdrawComet = async (user, { amount, email, walletType: requestedWalletType = 'balance' }) => {
+  if (user.withdrawalPaused) throw ApiError.forbidden('Withdrawals are paused on this account');
   const payoutEmail = String(email || '').trim();
   const payoutAmount = Number(Number(amount).toFixed(2));
   const walletType = normalizeWalletType(requestedWalletType);
@@ -246,6 +248,7 @@ const splitName = (name = '') => {
 };
 
 const createCardPaymentLink = async (user, payload) => {
+  if (user.depositPaused) throw ApiError.forbidden('Deposits are paused on this account');
   const email = payload.email || user.email;
   if (!email) {
     throw ApiError.badRequest('Email is required for card deposits');
@@ -370,6 +373,7 @@ const testCreditWallet = async (user, { amount, walletType = 'balance' }) => {
 };
 
 const withdrawCelo = async (user, payload) => {
+  if (user.withdrawalPaused) throw ApiError.forbidden('Withdrawals are paused on this account');
   const asset = payload.asset || 'USDT';
   const usdcAmount = Number(payload.amount);
 

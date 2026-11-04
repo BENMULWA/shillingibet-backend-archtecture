@@ -25,6 +25,8 @@ const authenticate = asyncHandler(async (req, _res, next) => {
   const payload = jwt.verify(token, config.jwt.secret);
   const user = await User.findById(payload.sub).lean();
   if (!user) throw ApiError.unauthorized('User no longer exists');
+  if (user.deletedAt) throw ApiError.unauthorized('User no longer exists');
+  if (user.status !== 'active') throw ApiError.forbidden('Account is suspended');
   if (user.phoneVerified !== true) {
     throw ApiError.forbidden('Phone number not verified');
   }

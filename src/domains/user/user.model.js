@@ -89,6 +89,18 @@ const userSchema = new mongoose.Schema(
     },
     activeWallet: { type: String, enum: ['balance', 'airtime'], default: 'balance' },
     status: { type: String, enum: ['active', 'suspended'], default: 'active' },
+    // Back-office account controls
+    depositPaused: { type: Boolean, default: false },
+    withdrawalPaused: { type: Boolean, default: false },
+    bonusBalance: { type: Number, default: 0, min: 0 },
+    welcomeBonus: {
+      grantedAt: { type: Date, default: null },
+      amount: { type: Number, default: 0, min: 0 },
+      reviewStatus: { type: String, enum: ['none', 'credited', 'held', 'rejected'], default: 'none' },
+      frozenAt: { type: Date, default: null },
+      frozenAmount: { type: Number, default: 0, min: 0 },
+    },
+    deletedAt: { type: Date, default: null, index: true },
   },
   {
     timestamps: true,

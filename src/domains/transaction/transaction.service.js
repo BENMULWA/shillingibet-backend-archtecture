@@ -23,6 +23,7 @@ const makeRef = (prefix) => `${prefix}-${Date.now()}-${crypto.randomUUID().slice
 const callbackUrl = () => `${config.mamlaka.callbackBaseUrl}/callbacks/mamlaka`;
 
 const deposit = async (user, { amount, phone, provider, walletType: requestedWalletType }) => {
+  if (user.depositPaused) throw ApiError.forbidden('Deposits are paused on this account');
   const payerPhone = normalizePhone(phone);
   const mobileMoneySP = provider || config.mamlaka.defaultProvider;
   const externalId = makeRef('DEP');
@@ -66,6 +67,7 @@ const deposit = async (user, { amount, phone, provider, walletType: requestedWal
 };
 
 const withdraw = async (user, { amount, phone, provider, walletType: requestedWalletType }) => {
+  if (user.withdrawalPaused) throw ApiError.forbidden('Withdrawals are paused on this account');
   const recipientPhone = normalizePhone(phone);
   const mobileMoneySP = provider || config.mamlaka.defaultProvider;
   const walletType = normalizeWalletType(requestedWalletType || user.activeWallet);
