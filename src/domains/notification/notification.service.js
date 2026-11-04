@@ -7,12 +7,12 @@ const logger = require('../../utils/logger');
 // many withdrawal attempts) doesn't spam one notification per event.
 const DEDUPE_COOLDOWN_MS = 30 * 60 * 1000;
 
-const create = async ({ type, severity = 'info', title, message, relatedId = null, dedupeKey = null }) => {
+const create = async ({ type, severity = 'info', title, message, relatedId = null, dedupeKey = null, cooldownMs = DEDUPE_COOLDOWN_MS }) => {
   try {
     if (dedupeKey) {
       const recentDuplicate = await Notification.findOne({
         dedupeKey,
-        createdAt: { $gte: new Date(Date.now() - DEDUPE_COOLDOWN_MS) },
+        createdAt: { $gte: new Date(Date.now() - cooldownMs) },
       }).lean();
       if (recentDuplicate) return null;
     }

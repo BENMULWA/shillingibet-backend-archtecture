@@ -18,6 +18,7 @@ const User = require('../user/user.model');
 const { qualifiesForReferralBonus } = require('../user/referral');
 const payoutFloatService = require('../admin/payoutFloat.service');
 const notificationService = require('../notification/notification.service');
+const liquidityAlert = require('../admin/liquidityAlert.service');
 
 const makeRef = (prefix) => `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -91,13 +92,14 @@ const settleRejectedWithdrawal = async (txn) => {
 
   if (String(res.error || '').toUpperCase() === 'INSUFFICIENT_BALANCE') {
     await notificationService.create({
-      type: 'payout_provider_balance',
+      type: 'treasury_low',
       severity: 'critical',
       title: 'Payout account is out of funds',
       message: `A KES ${txn.amount} withdrawal was refused because the Mamlaka payout balance is too low. Top up the payout account.`,
       relatedId: String(txn._id),
       dedupeKey: 'payout-provider-insufficient-balance',
     });
+    liquidityAlert.checkSoon({ force: true });
   }
   return true;
 };
@@ -197,6 +199,8 @@ const withdraw = async (user, { amount, phone, provider, walletType: requestedWa
     }
 
     await txn.save();
+
+    if (usesPayoutFloat) liquidityAlert.checkSoon();
 
     if (!isAirtimeWithdrawal && (await settleRejectedWithdrawal(txn))) {
       const settled = await Transaction.findById(txn._id).lean();

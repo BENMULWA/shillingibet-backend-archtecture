@@ -116,6 +116,22 @@ const config = Object.freeze({
     sessionTtlHours: parseInt(process.env.EUROVIRTUALS_SESSION_TTL_HOURS, 10) || 24,
   },
 
+  // Alerts for the real money at the payment provider (Mamlaka payout balance).
+  liquidity: {
+    alertPhones: (process.env.LIQUIDITY_ALERT_PHONES || '0714073826')
+      .split(',')
+      .map((phone) => phone.trim())
+      .filter(Boolean),
+    threshold: Number(process.env.LIQUIDITY_ALERT_THRESHOLD) || 500,
+    checkMinutes: Number(process.env.LIQUIDITY_CHECK_MINUTES) || 5,
+    cooldownMinutes: Number(process.env.LIQUIDITY_ALERT_COOLDOWN_MINUTES) || 60,
+    // Local development shares the live account, so only production watches by default.
+    monitorEnabled:
+      process.env.LIQUIDITY_MONITOR_ENABLED != null
+        ? process.env.LIQUIDITY_MONITOR_ENABLED === 'true'
+        : (process.env.NODE_ENV || 'development') === 'production',
+  },
+
   sms: {
     enabled: process.env.SMS_ENABLED !== 'false',
     baseUrl: (process.env.SMS_BASE_URL || 'https://isms.celcomafrica.com').replace(/\/$/, ''),

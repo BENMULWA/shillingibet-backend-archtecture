@@ -6,7 +6,7 @@ const PayoutFloat = require('./payoutFloat.model');
 
 const FLOAT_ID = 'payout-float';
 const ALERT_COOLDOWN_MS = 15 * 60 * 1000;
-const PAYOUT_FLOAT_ALERT_PHONE = '0714073826';
+const config = require('../../config');
 
 const ensurePayoutFloat = async () => {
   try {
@@ -185,11 +185,11 @@ const alertPayoutContact = async ({ amount, available, user }) => {
   const userName = String(user?.name || '').trim() || user?.phone || 'Unknown player';
   const message = `Bingwake alert: withdrawal by ${userName} was blocked. Requested KES ${amount.toLocaleString('en-KE')}, payout float available KES ${available.toLocaleString('en-KE')}. Top up the payout float in Settings.`;
 
-  await smsService.safeSend({
-    phone: PAYOUT_FLOAT_ALERT_PHONE,
-    message,
-    context: 'payout_float_low',
-  });
+  await Promise.all(
+    config.liquidity.alertPhones.map((phone) =>
+      smsService.safeSend({ phone, message, context: 'payout_float_low' })
+    )
+  );
 };
 
 const requirePayoutCapacity = async ({ reference, amount, user }) => {

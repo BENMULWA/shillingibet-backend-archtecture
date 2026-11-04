@@ -20,6 +20,7 @@ const payoutFloatSchema = new mongoose.Schema(
     reservations: { type: [reservationSchema], default: [] },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     lastLowBalanceAlertAt: { type: Date, default: null },
+    lastLiquidityAlertAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

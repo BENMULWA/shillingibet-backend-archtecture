@@ -4,6 +4,7 @@ const http = require('http');
 const app = require('./app');
 const config = require('./config');
 const logger = require('./utils/logger');
+const { startLiquidityMonitor } = require('./domains/admin/liquidityAlert.service');
 const { connectDatabase, disconnectDatabase } = require('./config/database');
 
 let server;
@@ -16,6 +17,7 @@ async function start() {
     logger.info(`Bingwake API listening on port ${config.port} [${config.env}]`);
     logger.info(`Base URL: http://localhost:${config.port}${config.apiPrefix}`);
   });
+  startLiquidityMonitor();
 }
 
 async function shutdown(signal) {
