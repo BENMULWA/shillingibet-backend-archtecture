@@ -78,7 +78,9 @@ const now = () =>
   new Date().toISOString().replace('T', ' ').slice(0, 19);
 
 const incPipeline = (delta) => [
-  { $set: { balance: { $round: [{ $add: ['$balance', delta] }, 2] } } },
+  // $ifNull guards documents written before `balance` existed — without it
+  // `$add` on a missing field yields null and silently wipes the balance.
+  { $set: { balance: { $round: [{ $add: [{ $ifNull: ['$balance', 0] }, delta] }, 2] } } },
 ];
 
 const CODES = {
@@ -144,7 +146,16 @@ const playerInfo = async ({ body }) => {
   if (!player_id) return result(CODES.MISSING_PARAMS, 'Missing required parameters');
 
   const user = await resolvePlayerWithRequiredSession(player_id, player_token);
-  if (!user) return result(CODES.UNAUTHORISED, 'Unauthorised access');
+  if (!user) {
+    logger.warn('EV player_info rejected', { playerId: String(player_id), reason: 'invalid_session' });
+    return result(CODES.UNAUTHORISED, 'Unauthorised access');
+  }
+
+  logger.info('EV player_info balance returned', {
+    playerId: String(user._id),
+    balance: round2(user.balance),
+    currency: config.eurovirtuals.currency,
+  });
 
   return result(CODES.SUCCESS, 'Success', {
     balance: round2(user.balance),
@@ -270,7 +281,15 @@ const placeBet = async ({ body }) => {
     incPipeline(-debit),
     { new: true }
   ).lean();
-  if (!debited) return result(CODES.INSUFFICIENT, 'Insufficient Balance');
+  if (!debited) {
+    logger.warn('EV bet rejected for insufficient balance', {
+      playerId: String(user._id),
+      requestedAmount: debit,
+      observedBalance: round2(user.balance),
+      currency: cur,
+    });
+    return result(CODES.INSUFFICIENT, 'Insufficient Balance');
+  }
 
   const referenceId = crypto.randomUUID();
   try {

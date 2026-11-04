@@ -15,8 +15,15 @@ const transactpay = require('../../integrations/transactpay/transactpay.client')
 const mamlakaCelo = require('../../integrations/mamlaka/celo.client');
 const Transaction = require('../transaction/transaction.model');
 const User = require('../user/user.model');
+const payoutFloatService = require('../admin/payoutFloat.service');
 
-const makeRef = () => `COMET-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+const makeCometRef = (type, currency, reference = '') => {
+  const referenceSuffix = String(reference)
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .slice(0, 50);
+  const referencePart = referenceSuffix ? `-${referenceSuffix}` : '';
+  return `COMET-${currency}-${type}${referencePart}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+};
 const makeCardRef = () => `CARD-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 const makeCeloRef = () => `CELO-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -42,12 +49,15 @@ const createBillOrder = async (user, payload) => {
     throw ApiError.badRequest('Email is required for Comet bill-order deposits');
   }
   const walletType = normalizeWalletType(payload.walletType || user.activeWallet);
+  const currency = walletType === 'airtime'
+    ? 'ARTM'
+    : String(payload.currency || config.comet.currency).toUpperCase();
 
-  const externalRef = payload.external_ref || makeRef();
+  const externalRef = makeCometRef('DEP', currency, payload.external_ref);
   const billOrderPayload = {
     direction: 'debit',
     amount: payload.amount,
-    currency: payload.currency || config.comet.currency,
+    currency,
     comment: payload.comment || externalRef,
     email,
     description: payload.description || `Betnare wallet deposit ${externalRef}`,
@@ -78,7 +88,6 @@ const createBillOrder = async (user, payload) => {
       providerResponse.billOrderId ||
       providerResponse.id != null ? String(providerResponse.id) :
       null;
-    if (order?.external_ref) txn.externalId = order.external_ref;
     if (order?.comment_ref && !txn.receipt) txn.receipt = order.comment_ref;
     await txn.save();
 
@@ -94,17 +103,39 @@ const createBillOrder = async (user, payload) => {
   }
 };
 
-const withdrawComet = async (user, { amount, email }) => {
+const withdrawComet = async (user, { amount, email, walletType: requestedWalletType = 'balance' }) => {
   const payoutEmail = String(email || '').trim();
   const payoutAmount = Number(Number(amount).toFixed(2));
-  const externalId = makeRef('COMET-WDR');
-  const debited = await User.findOneAndUpdate(
-    { _id: user._id, ...walletBalanceQuery('balance', payoutAmount) },
-    incWalletBalance('balance', -payoutAmount),
-    { new: true }
-  ).lean();
+  const walletType = normalizeWalletType(requestedWalletType);
+  const currency = walletType === 'airtime' ? 'ARTM' : config.comet.currency;
+  const externalId = makeCometRef('WDR', currency);
+  const usesPayoutFloat = walletType === 'balance' && currency === 'KES';
+  if (usesPayoutFloat) {
+    await payoutFloatService.requirePayoutCapacity({
+      reference: externalId,
+      amount: payoutAmount,
+      user,
+    });
+  }
 
-  if (!debited) throw ApiError.badRequest('Insufficient main wallet balance');
+  let debited;
+  try {
+    debited = await User.findOneAndUpdate(
+      { _id: user._id, ...walletBalanceQuery(walletType, payoutAmount) },
+      incWalletBalance(walletType, -payoutAmount),
+      { new: true }
+    ).lean();
+  } catch (error) {
+    if (usesPayoutFloat) await payoutFloatService.settlePayout(externalId, { refund: true });
+    throw error;
+  }
+
+  if (!debited) {
+    if (usesPayoutFloat) await payoutFloatService.settlePayout(externalId, { refund: true });
+    throw ApiError.badRequest(
+      walletType === 'airtime' ? 'Insufficient airtime wallet balance' : 'Insufficient main wallet balance'
+    );
+  }
 
   let txn;
   try {
@@ -112,8 +143,8 @@ const withdrawComet = async (user, { amount, email }) => {
       user: user._id,
       type: 'withdrawal',
       amount: payoutAmount,
-      currency: config.comet.currency,
-      walletType: 'balance',
+      currency,
+      walletType,
       provider: 'Comet',
       phone: user.phone,
       externalId,
@@ -121,12 +152,14 @@ const withdrawComet = async (user, { amount, email }) => {
     });
   } catch (error) {
     await User.updateOne({ _id: user._id }, incWalletBalance('balance', payoutAmount));
+    if (usesPayoutFloat) await payoutFloatService.settlePayout(externalId, { refund: true });
     throw error;
   }
 
   const refundAndFail = async (reason, providerResponse = null) => {
     const processedAt = new Date();
-    await User.updateOne({ _id: user._id }, incWalletBalance('balance', payoutAmount));
+    await User.updateOne({ _id: user._id }, incWalletBalance(walletType, payoutAmount));
+    if (usesPayoutFloat) await payoutFloatService.settlePayout(externalId, { refund: true });
     txn.status = 'failed';
     txn.failureReason = reason;
     txn.providerResponse = providerResponse;
@@ -141,10 +174,10 @@ const withdrawComet = async (user, { amount, email }) => {
     providerResponse = await comet.createCreditOrder({
       direction: 'credit',
       amount: payoutAmount,
-      currency: config.comet.currency,
-      comment: `ShilingiBet wallet withdrawal ${externalId}`,
+      currency,
+      comment: `Bingwake wallet withdrawal ${externalId}`,
       email: payoutEmail,
-      description: `ShilingiBet withdrawal ${externalId}`,
+      description: `Bingwake withdrawal ${externalId}`,
       external_ref: externalId,
     });
   } catch (error) {
@@ -177,7 +210,7 @@ const withdrawComet = async (user, { amount, email }) => {
 
   if (status === 'failed') {
     txn.failureReason = order?.reason || providerResponse.message || 'Comet rejected the payout';
-    await User.updateOne({ _id: user._id }, incWalletBalance('balance', payoutAmount));
+    await User.updateOne({ _id: user._id }, incWalletBalance(walletType, payoutAmount));
     txn.completedAt = processedAt;
     txn.walletAppliedAt = processedAt;
   } else if (status === 'completed') {
@@ -185,6 +218,11 @@ const withdrawComet = async (user, { amount, email }) => {
   }
 
   await txn.save();
+  if (usesPayoutFloat && status === 'failed') {
+    await payoutFloatService.settlePayout(externalId, { refund: true });
+  } else if (usesPayoutFloat && status === 'completed') {
+    await payoutFloatService.settlePayout(externalId);
+  }
   logger.info('Comet wallet payout processed', externalId, status, payoutAmount);
 
   return {
@@ -213,6 +251,9 @@ const createCardPaymentLink = async (user, payload) => {
     throw ApiError.badRequest('Email is required for card deposits');
   }
   const walletType = normalizeWalletType(payload.walletType || user.activeWallet);
+  if (walletType === 'airtime') {
+    throw ApiError.badRequest('Airtime wallet deposits are only available through Comet');
+  }
 
   const inferredName = splitName(user.name);
   const firstName = payload.first_name || inferredName.firstName || 'Betnare';
@@ -342,13 +383,27 @@ const withdrawCelo = async (user, payload) => {
   }
   const debitAmountKes = Number((quote.to_amount ?? usdcAmount * rate).toFixed(2));
   const externalId = makeCeloRef();
+  await payoutFloatService.requirePayoutCapacity({
+    reference: externalId,
+    amount: debitAmountKes,
+    user,
+  });
 
-  const debited = await User.findOneAndUpdate(
-    { _id: user._id, ...walletBalanceQuery('balance', debitAmountKes) },
-    incWalletBalance('balance', -debitAmountKes),
-    { new: true }
-  ).lean();
-  if (!debited) throw ApiError.badRequest('Insufficient main wallet balance');
+  let debited;
+  try {
+    debited = await User.findOneAndUpdate(
+      { _id: user._id, ...walletBalanceQuery('balance', debitAmountKes) },
+      incWalletBalance('balance', -debitAmountKes),
+      { new: true }
+    ).lean();
+  } catch (error) {
+    await payoutFloatService.settlePayout(externalId, { refund: true });
+    throw error;
+  }
+  if (!debited) {
+    await payoutFloatService.settlePayout(externalId, { refund: true });
+    throw ApiError.badRequest('Insufficient main wallet balance');
+  }
 
   let txn;
   try {
@@ -403,6 +458,7 @@ const withdrawCelo = async (user, payload) => {
       txn.walletAppliedAt = txn.completedAt;
     }
     await txn.save();
+    if (completed) await payoutFloatService.settlePayout(externalId);
 
     return {
       transaction: txn.toJSON(),
@@ -413,6 +469,7 @@ const withdrawCelo = async (user, payload) => {
     };
   } catch (error) {
     await User.updateOne({ _id: user._id }, incWalletBalance('balance', debitAmountKes));
+    await payoutFloatService.settlePayout(externalId, { refund: true });
     if (txn) {
       txn.status = 'failed';
       txn.failureReason = error.message;
@@ -584,10 +641,19 @@ const handleCallback = async (payload) => {
     return { ok: true, status: 'pending' };
   }
 
-  return withTransaction(
+  const result = await withTransaction(
     (session) => handleCallbackInSession(session, payload, status),
     () => handleCallbackCompensating(payload, status)
   );
+
+  if (payload.direction === 'credit' && result.ok && !result.idempotent) {
+    const txn = await findCallbackTransaction(payload);
+    if (txn?.currency === 'KES') {
+      await payoutFloatService.settlePayout(txn.externalId, { refund: status === 'failed' });
+    }
+  }
+
+  return result;
 };
 
 // ======================================================================
@@ -761,6 +827,7 @@ const reconcileCeloWithdrawal = async (payload, event) => {
     }
     await txn.save();
   }
+  await payoutFloatService.settlePayout(txn.externalId, { refund: nextStatus === 'failed' });
 
   return { ok: true, status: nextStatus, transactionId: txn._id };
 };

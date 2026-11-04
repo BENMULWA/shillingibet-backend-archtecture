@@ -48,7 +48,7 @@ const config = Object.freeze({
     username: process.env.MAMLAKA_API_USERNAME,
     password: process.env.MAMLAKA_API_PASSWORD,
     merchantId: process.env.MAMLAKA_MERCHANT_ID,
-    displayName: process.env.MAMLAKA_DISPLAY_NAME || 'ShilingiBet',
+    displayName: process.env.MAMLAKA_DISPLAY_NAME || 'Bingwake',
     currency: process.env.MAMLAKA_CURRENCY || 'KES',
     defaultProvider: process.env.MAMLAKA_DEFAULT_PROVIDER || 'M-Pesa',
     callbackBaseUrl: (

@@ -10,6 +10,8 @@ const pickPresentKeys = (body = {}, keys = []) =>
   keys.filter((key) => body[key] !== undefined && body[key] !== null && body[key] !== '');
 
 const summarizeWinRequest = (req) => ({
+  action: req.body?.action ?? req.body?.data?.action ?? null,
+  status: req.body?.status ?? req.body?.data?.status ?? null,
   bet_id: req.body?.bet_id ?? null,
   betId: req.body?.betId ?? null,
   player_id: req.body?.player_id ?? null,
@@ -84,6 +86,7 @@ const win = async (req, res) => {
     logger.info('EV /win payout debug', summarizeWinPayoutValues(req.body));
     const out = await service.winBet({ body: req.body });
     logger.info('EV /win result', {
+      action: req.body?.action ?? req.body?.data?.action ?? null,
       bet_id: req.body?.bet_id ?? null,
       player_id: req.body?.player_id ?? null,
       status_code: out.status_code,

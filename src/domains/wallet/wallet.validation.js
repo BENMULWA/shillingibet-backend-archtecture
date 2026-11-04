@@ -23,6 +23,7 @@ const cometWithdraw = z.object({
     .min(config.limits.withdrawal.min, `Minimum withdrawal is ${config.limits.withdrawal.min}`)
     .max(config.limits.withdrawal.max, `Maximum withdrawal is ${config.limits.withdrawal.max}`),
   email: z.string().trim().email(),
+  walletType: z.enum(['balance', 'airtime']).optional(),
 });
 
 const cardLink = z.object({

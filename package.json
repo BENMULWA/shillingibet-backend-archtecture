@@ -8,6 +8,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/scripts/seed.js",
+    "backfill:users": "node src/scripts/backfillUserFields.js",
+    "backfill:users:apply": "node src/scripts/backfillUserFields.js --apply",
     "test": "node --test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

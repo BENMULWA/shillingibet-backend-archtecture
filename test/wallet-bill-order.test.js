@@ -13,6 +13,10 @@ const loadService = ({ providerResponse, providerError, transaction = null } = {
     creditPayload: null,
     createdTransactions: [],
     walletUpdates: [],
+    floatRequired: [],
+    floatAlert: null,
+    floatSettlements: [],
+    floatError: null,
   };
 
   Module._load = function mockLoad(request, parent, isMain) {
@@ -111,6 +115,26 @@ const loadService = ({ providerResponse, providerError, transaction = null } = {
       };
     }
 
+    if (request === '../admin/payoutFloat.service' && parent?.filename === servicePath) {
+      return {
+        requirePayoutCapacity: async (payload) => {
+          state.floatRequired.push(payload);
+          if (state.floatError) {
+            state.floatAlert = {
+              phone: '0714073826',
+              userName: payload.user?.name || payload.user?.phone,
+              amount: payload.amount,
+            };
+            throw state.floatError;
+          }
+        },
+        settlePayout: async (reference, options) => {
+          state.floatSettlements.push({ reference, options });
+          return true;
+        },
+      };
+    }
+
     if (request === '../../utils/db' && parent?.filename === servicePath) {
       return {
         incBalance(delta) {
@@ -173,7 +197,7 @@ test('createBillOrder uses the request email when provided and persists provider
   );
 
   assert.equal(state.providerPayload.email, 'payer@example.com');
-  assert.equal(state.providerPayload.external_ref, 'AMZ-ORDER-123');
+  assert.match(state.providerPayload.external_ref, /^COMET-KES-DEP-AMZ-ORDER-123-\d+-[a-f0-9]{8}$/);
   assert.equal(state.providerPayload.direction, 'debit');
   assert.match(state.providerPayload.callback_url, /\/api\/v1\/webhooks\/comet$/);
   assert.equal(state.createdTransactions[0].provider, 'Comet');
@@ -194,7 +218,7 @@ test('createBillOrder uses the request email when provided and persists provider
     },
     status: 'success',
   });
-  assert.equal(result.transaction.externalId, 'AMZ-ORDER-123');
+  assert.equal(result.transaction.externalId, state.providerPayload.external_ref);
 });
 
 test('createBillOrder falls back to the authenticated user email', async () => {
@@ -206,8 +230,22 @@ test('createBillOrder falls back to the authenticated user email', async () => {
   );
 
   assert.equal(state.providerPayload.email, 'account@example.com');
-  assert.match(state.providerPayload.external_ref, /^COMET-/);
+  assert.match(state.providerPayload.external_ref, /^COMET-KES-DEP-/);
   assert.match(state.providerPayload.callback_url, /\/api\/v1\/webhooks\/comet$/);
+});
+
+test('createBillOrder persists an explicitly selected airtime wallet', async () => {
+  const { service, state } = loadService();
+
+  await service.createBillOrder(
+    { _id: 'user-1', phone: '254700000002', email: 'account@example.com', activeWallet: 'balance' },
+    { amount: 5, currency: 'KES', walletType: 'airtime' }
+  );
+
+  assert.equal(state.createdTransactions[0].walletType, 'airtime');
+  assert.equal(state.createdTransactions[0].currency, 'ARTM');
+  assert.equal(state.providerPayload.currency, 'ARTM');
+  assert.match(state.providerPayload.external_ref, /^COMET-ARTM-DEP-/);
 });
 
 test('createBillOrder rejects requests with no available email', async () => {
@@ -265,15 +303,19 @@ test('createCardPaymentLink creates a TransactPay redirect and stores the provid
   assert.equal(result.redirectUrl, 'https://payment-link.transactpay.ai/payment/checkout/USD-LINK-1');
 });
 
-test('createCardPaymentLink stores the active airtime wallet on the pending transaction', async () => {
+test('createCardPaymentLink rejects Airtime wallet deposits before creating an order', async () => {
   const { service, state } = loadService();
 
-  await service.createCardPaymentLink(
-    { _id: 'user-1', phone: '254700000002', email: 'account@example.com', name: 'Mary Jane', activeWallet: 'airtime' },
-    { amount: 100, currency: 'USD', country: 'US' }
+  await assert.rejects(
+    service.createCardPaymentLink(
+      { _id: 'user-1', phone: '254700000002', email: 'account@example.com', name: 'Mary Jane', activeWallet: 'airtime' },
+      { amount: 100, currency: 'USD', country: 'US' }
+    ),
+    /Airtime wallet deposits are only available through Comet/
   );
 
-  assert.equal(state.createdTransactions[0].walletType, 'airtime');
+  assert.equal(state.createdTransactions.length, 0);
+  assert.equal(state.providerPayload, null);
 });
 
 test('createCardPaymentLink uses request overrides and rejects when no email is available', async () => {
@@ -335,7 +377,7 @@ test('handleCallback credits the wallet once when Comet marks the order approved
     type: 'deposit',
     provider: 'Comet',
     amount: 1,
-    currency: 'KES',
+    currency: 'ARTM',
     walletType: 'airtime',
     externalId: 'AMZ-ORDER-123',
     status: 'pending',
@@ -347,7 +389,7 @@ test('handleCallback credits the wallet once when Comet marks the order approved
   const result = await service.handleCallback({
     amount: 1,
     comment_ref: 'amazon-cart-123',
-    currency: 'KES',
+    currency: 'ARTM',
     external_ref: 'AMZ-ORDER-123',
     order_id: 47,
     payer_email: 'collscodes@gmail.com',
@@ -449,12 +491,39 @@ test('withdrawComet reserves the main balance and submits a credit order', async
   assert.equal(result.status, 'completed');
   assert.equal(state.creditPayload.direction, 'credit');
   assert.equal(state.creditPayload.amount, 10);
+  assert.equal(state.creditPayload.currency, 'KES');
+  assert.match(state.creditPayload.external_ref, /^COMET-KES-WDR-/);
   assert.equal(state.creditPayload.email, 'player@example.com');
   assert.equal(state.createdTransactions[0].provider, 'Comet');
   assert.equal(state.createdTransactions[0].type, 'withdrawal');
   assert.equal(state.createdTransactions[0].secureId, '77');
+  assert.equal(state.floatRequired.length, 1);
+  assert.equal(state.floatRequired[0].amount, 10);
+  assert.equal(state.floatRequired[0].user.name, undefined);
+  assert.equal(state.floatSettlements[0].options, undefined);
   assert.equal(state.walletUpdates[0].query.balance.$gte, 10);
   assert.equal(state.walletUpdates[0].update[0].$set.balance.$round[0].$add[1], -10);
+});
+
+test('withdrawComet reserves airtime balance and creates an ARTM payout reference', async () => {
+  const { service, state } = loadService({
+    providerResponse: { status: 'success', order: { ID: 78, status: 'completed' } },
+  });
+
+  const result = await service.withdrawComet(
+    { _id: 'user-1', phone: '254700000002' },
+    { amount: 10, email: 'player@example.com', walletType: 'airtime' }
+  );
+
+  assert.equal(result.status, 'completed');
+  assert.equal(state.creditPayload.direction, 'credit');
+  assert.equal(state.creditPayload.currency, 'ARTM');
+  assert.match(state.creditPayload.external_ref, /^COMET-ARTM-WDR-/);
+  assert.equal(state.createdTransactions[0].walletType, 'airtime');
+  assert.equal(state.createdTransactions[0].currency, 'ARTM');
+  assert.equal(state.floatRequired.length, 0);
+  assert.equal(state.walletUpdates[0].query.airtimeBalance.$gte, 10);
+  assert.equal(state.walletUpdates[0].update[0].$set.airtimeBalance.$round[0].$add[1], -10);
 });
 
 test('withdrawComet refunds the wallet when Comet explicitly declines a payout', async () => {
@@ -471,6 +540,31 @@ test('withdrawComet refunds the wallet when Comet explicitly declines a payout',
   assert.equal(state.walletUpdates.length, 2);
   assert.equal(state.walletUpdates[1].update[0].$set.balance.$round[0].$add[1], 10);
   assert.equal(state.createdTransactions[0].status, 'failed');
+  assert.equal(state.floatSettlements.at(-1).options.refund, true);
+});
+
+test('withdrawComet blocks KES payouts before debiting the player when float is insufficient', async () => {
+  const { service, state } = loadService();
+  state.floatError = Object.assign(new Error('Payout float insufficient'), { statusCode: 503 });
+
+  await assert.rejects(
+    service.withdrawComet(
+      { _id: 'user-1', name: 'Player One', phone: '254700000002' },
+      { amount: 10, email: 'player@example.com' }
+    ),
+    /Payout float insufficient/
+  );
+
+  assert.equal(state.floatRequired.length, 1);
+  assert.equal(state.floatRequired[0].user.name, 'Player One');
+  assert.equal(state.walletUpdates.length, 0);
+  assert.equal(state.createdTransactions.length, 0);
+  assert.equal(state.creditPayload, null);
+  assert.deepEqual(state.floatAlert, {
+    phone: '0714073826',
+    userName: 'Player One',
+    amount: 10,
+  });
 });
 
 test('withdrawComet leaves the balance reserved when provider outcome is ambiguous', async () => {
@@ -516,4 +610,35 @@ test('handleCallback refunds a declined Comet credit withdrawal once', async () 
   assert.equal(txn.walletAppliedAt instanceof Date, true);
   assert.equal(state.walletUpdates.length, 1);
   assert.equal(state.walletUpdates[0].update[0].$set.balance.$round[0].$add[1], 10);
+});
+
+test('handleCallback refunds a declined ARTM Comet withdrawal to the airtime balance', async () => {
+  const txn = {
+    _id: 'txn-airtime-withdrawal',
+    user: 'user-1',
+    type: 'withdrawal',
+    provider: 'Comet',
+    amount: 10,
+    currency: 'ARTM',
+    walletType: 'airtime',
+    externalId: 'COMET-ARTM-WDR-1',
+    status: 'pending',
+    walletAppliedAt: null,
+    async save() {},
+  };
+  const { service, state } = loadService({ transaction: txn });
+
+  const result = await service.handleCallback({
+    direction: 'credit',
+    event: 'bill_order.declined',
+    external_ref: 'COMET-ARTM-WDR-1',
+    amount: 10,
+    currency: 'ARTM',
+    status: 'declined',
+  });
+
+  assert.equal(result.status, 'failed');
+  assert.equal(txn.status, 'failed');
+  assert.equal(state.walletUpdates.length, 1);
+  assert.equal(state.walletUpdates[0].update[0].$set.airtimeBalance.$round[0].$add[1], 10);
 });

@@ -13,6 +13,8 @@ const loadService = ({ airtimeResponse, airtimeError } = {}) => {
     userUpdates: [],
     airtimePayload: null,
     smsPayloads: [],
+    floatRequired: [],
+    floatError: null,
   };
 
   Module._load = function mockLoad(request, parent, isMain) {
@@ -95,6 +97,16 @@ const loadService = ({ airtimeResponse, airtimeError } = {}) => {
       };
     }
 
+    if (request === '../admin/payoutFloat.service' && parent?.filename === servicePath) {
+      return {
+        requirePayoutCapacity: async (payload) => {
+          state.floatRequired.push(payload);
+          if (state.floatError) throw state.floatError;
+        },
+        settlePayout: async () => true,
+      };
+    }
+
     if (request === '../../utils/db' && parent?.filename === servicePath) {
       return {
         withTransaction: async () => {},
@@ -157,9 +169,29 @@ test('airtime withdrawal debits airtimeBalance and marks transaction completed o
   assert.equal(state.airtimePayload.email, 'customer@example.com');
   assert.equal(state.createdTransactions[0].currency, 'ARTM');
   assert.equal(state.createdTransactions[0].walletType, 'airtime');
+  assert.equal(state.floatRequired.length, 0);
   assert.equal(txn.status, 'completed');
   assert.equal(txn.receipt, 'AIRTIME-001');
   assert.equal(state.smsPayloads.length, 1);
+});
+
+test('KES Mamlaka withdrawal checks payout float before debiting player balance', async () => {
+  const { service, state } = loadService();
+  state.floatError = Object.assign(new Error('Payout float insufficient'), { statusCode: 503 });
+
+  await assert.rejects(
+    service.withdraw(
+      { _id: 'user-1', phone: '254700000001', activeWallet: 'balance' },
+      { amount: 75, phone: '254700000001' }
+    ),
+    /Payout float insufficient/
+  );
+
+  assert.equal(state.floatRequired.length, 1);
+  assert.equal(state.floatRequired[0].amount, 75);
+  assert.equal(state.floatRequired[0].user.phone, '254700000001');
+  assert.equal(state.userUpdates.length, 0);
+  assert.equal(state.createdTransactions.length, 0);
 });
 
 test('airtime withdrawal refunds airtimeBalance on immediate failure', async () => {

@@ -9,7 +9,7 @@ const corsOptions = {
   origin: true,
   credentials,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-ID'],
   exposedHeaders: ['X-Total-Count'],
   maxAge: 86400,
   optionsSuccessStatus: 204,

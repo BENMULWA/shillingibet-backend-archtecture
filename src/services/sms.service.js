@@ -58,7 +58,7 @@ const sendSignupWelcome = ({ phone, name }) => {
   return safeSend({
     phone,
     context: 'signup_welcome',
-    message: `${config.sms.senderName}: ${greeting}your ShilingiBet account has been created successfully.`,
+    message: `${config.sms.senderName}: ${greeting}your Bingwake account has been created successfully.`,
   });
 };
 

@@ -8,7 +8,6 @@ const {
   withTransaction,
   incWalletBalance,
   normalizeWalletType,
-  walletBalanceField,
   walletBalanceQuery,
 } = require('../../utils/db');
 const mamlaka = require('../../integrations/mamlaka/mamlaka.client');
@@ -17,6 +16,7 @@ const smsService = require('../../services/sms.service');
 const Transaction = require('./transaction.model');
 const User = require('../user/user.model');
 const { qualifiesForReferralBonus } = require('../user/referral');
+const payoutFloatService = require('../admin/payoutFloat.service');
 
 const makeRef = (prefix) => `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -27,6 +27,9 @@ const deposit = async (user, { amount, phone, provider, walletType: requestedWal
   const mobileMoneySP = provider || config.mamlaka.defaultProvider;
   const externalId = makeRef('DEP');
   const walletType = normalizeWalletType(requestedWalletType || user.activeWallet);
+  if (walletType === 'airtime') {
+    throw ApiError.badRequest('Airtime wallet deposits are only available through Comet');
+  }
 
   const txn = await Transaction.create({
     user: user._id,
@@ -69,14 +72,33 @@ const withdraw = async (user, { amount, phone, provider, walletType: requestedWa
   const isAirtimeWithdrawal = walletType === 'airtime';
   const externalId = makeRef(isAirtimeWithdrawal ? 'ART' : 'WDR');
   const currency = isAirtimeWithdrawal ? 'ARTM' : config.mamlaka.currency;
-  const balanceField = walletBalanceField(walletType);
+  const usesPayoutFloat = !isAirtimeWithdrawal && currency === 'KES';
 
-  const debited = await User.findOneAndUpdate(
-    { _id: user._id, ...walletBalanceQuery(walletType, amount) },
-    incWalletBalance(walletType, -amount),
-    { new: true }
-  ).lean();
+  if (usesPayoutFloat) {
+    await payoutFloatService.requirePayoutCapacity({
+      reference: externalId,
+      amount,
+      user,
+    });
+  }
+
+  let debited;
+  try {
+    debited = await User.findOneAndUpdate(
+      { _id: user._id, ...walletBalanceQuery(walletType, amount) },
+      incWalletBalance(walletType, -amount),
+      { new: true }
+    ).lean();
+  } catch (error) {
+    if (usesPayoutFloat) {
+      await payoutFloatService.settlePayout(externalId, { refund: true });
+    }
+    throw error;
+  }
   if (!debited) {
+    if (usesPayoutFloat) {
+      await payoutFloatService.settlePayout(externalId, { refund: true });
+    }
     throw ApiError.badRequest(
       isAirtimeWithdrawal ? 'Insufficient airtime balance' : 'Insufficient balance'
     );
@@ -138,6 +160,12 @@ const withdraw = async (user, { amount, phone, provider, walletType: requestedWa
 
     await txn.save();
 
+    if (usesPayoutFloat && txn.status === 'failed') {
+      await payoutFloatService.settlePayout(externalId, { refund: true });
+    } else if (usesPayoutFloat && txn.status === 'completed') {
+      await payoutFloatService.settlePayout(externalId);
+    }
+
     if (isAirtimeWithdrawal && txn.status !== 'pending') {
       await smsService.sendTransactionStatus({
         phone: txn.phone,
@@ -154,6 +182,9 @@ const withdraw = async (user, { amount, phone, provider, walletType: requestedWa
     return txn.toJSON();
   } catch (err) {
     await User.updateOne({ _id: user._id }, incWalletBalance(walletType, amount));
+    if (usesPayoutFloat) {
+      await payoutFloatService.settlePayout(externalId, { refund: true });
+    }
     if (txn) {
       txn.status = 'failed';
       txn.failureReason = err.message;
@@ -413,6 +444,13 @@ const handleCallback = async (type, payload) => {
     () => handleCallbackCompensating(type, payload, status, expectedType)
   );
 
+  if (expectedType === 'withdrawal' && result.ok && !result.idempotent) {
+    await payoutFloatService.settlePayout(
+      externalId,
+      { refund: status === 'failed' }
+    );
+  }
+
   if (result.ok && !result.idempotent) {
     await notifyTransactionStatus(externalId, status);
   }
@@ -441,6 +479,30 @@ const listForUser = async (userId, { type, status, page, limit }) => {
 
   const [items, total] = await Promise.all([
     Transaction.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    Transaction.countDocuments(filter),
+  ]);
+
+  return { items, total, page, limit, pages: Math.ceil(total / limit) };
+};
+
+const listForAdmin = async ({ type, status, phone, page, limit }) => {
+  const filter = {};
+  if (type) filter.type = type;
+  if (status) filter.status = status;
+  if (phone) {
+    const normalizedPhone = normalizePhone(phone);
+    filter.phone = { $regex: `^${normalizedPhone}` };
+  }
+
+  const projection =
+    'user type status amount currency walletType provider phone externalId secureId receipt failureReason completedAt createdAt updatedAt';
+  const [items, total] = await Promise.all([
+    Transaction.find(filter)
+      .select(projection)
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -483,5 +545,6 @@ module.exports = {
   handleCallback,
   handleMamlakaCallback,
   listForUser,
+  listForAdmin,
   getById,
 };
