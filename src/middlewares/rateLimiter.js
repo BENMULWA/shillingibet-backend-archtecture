@@ -41,6 +41,39 @@ const authLimiter = rateLimit({
   message: { success: false, message: 'Too many auth attempts, please try again later.' },
 });
 
+const staffLimiter = ({ max, keyOf, message }) =>
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max,
+    keyGenerator: (req, res) => keyOf(req, res),
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { success: false, message },
+  });
+
+const perChallenge = (req, res) => `challenge:${req.body?.challengeId || ipKeyGenerator(req, res)}`;
+const perIpAndPhone = (req, res) => `${ipKeyGenerator(req, res)}:${String(req.body?.phone || '').slice(-9)}`;
+
+const staffLoginLimiter = staffLimiter({
+  max: 5,
+  keyOf: perIpAndPhone,
+  message: 'Too many failed staff login attempts. Please try again later.',
+});
+const staffLoginVerificationLimiter = staffLimiter({
+  max: 5,
+  keyOf: perChallenge,
+  message: 'Too many incorrect sign-in codes. Start a new sign-in attempt.',
+});
+const staffLoginResendLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  keyGenerator: (req, res) => perChallenge(req, res),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many sign-in code requests. Start again later.' },
+});
+
 const depositLimiter = makeUserLimiter({
   windowMs: 60 * 1000,
   max: 5,
@@ -63,6 +96,9 @@ const launchLimiter = makeUserLimiter({
 module.exports = {
   apiLimiter,
   authLimiter,
+  staffLoginLimiter,
+  staffLoginVerificationLimiter,
+  staffLoginResendLimiter,
   depositLimiter,
   withdrawalLimiter,
   launchLimiter,

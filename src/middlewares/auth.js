@@ -32,6 +32,7 @@ const authenticate = asyncHandler(async (req, _res, next) => {
   }
 
   req.user = user;
+  req.authClaims = payload;
   next();
 });
 
@@ -51,6 +52,11 @@ const authorizeStaff = (...levels) => (req, _res, next) => {
   const staffLevel = getStaffLevel(req.user);
   if (!staffLevel || !requiredLevels.includes(staffLevel)) {
     return next(ApiError.forbidden('Insufficient permissions'));
+  }
+
+  // Staff privileges need a token issued after the SMS code check, never a plain login token.
+  if (req.authClaims?.mfa !== true) {
+    return next(ApiError.forbidden('Staff sign-in verification required'));
   }
 
   next();

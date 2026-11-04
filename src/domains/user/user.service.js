@@ -10,15 +10,18 @@ const smsService = require('../../services/sms.service');
 const User = require('./user.model');
 const { getStaffLevel, isStaffUser } = require('../../middlewares/auth');
 const { normalizeReferralCode, makeReferralCodeCandidate } = require('./referral');
+const authEvents = require('../admin/authEvent.service');
 const { incWalletBalance, normalizeWalletType } = require('../../utils/db');
 
-const signToken = (user) =>
+// `mfa` marks tokens issued after the SMS code check; staff routes reject tokens without it.
+const signToken = (user, { mfa = false } = {}) =>
   jwt.sign(
     {
       sub: user._id.toString(),
       role: user.role,
       isStaff: Boolean(user.isStaff),
       adminLevel: user.adminLevel || null,
+      ...(mfa ? { mfa: true } : {}),
     },
     config.jwt.secret,
     {
@@ -30,6 +33,7 @@ const hashResetCode = (code) =>
   crypto.createHash('sha256').update(`${code}:${config.jwt.secret}`).digest('hex');
 
 const generateResetCode = () => `${Math.floor(100000 + Math.random() * 900000)}`;
+const generateStaffLoginCode = () => `${crypto.randomInt(100000, 1000000)}`;
 const generatePhoneVerificationCode = () => `${Math.floor(100000 + Math.random() * 900000)}`;
 
 const generateUniqueReferralCode = async () => {
@@ -138,12 +142,123 @@ const login = async ({ phone, password }) => {
   return { user: { ...user.toJSON(), referral: await buildReferralProfile(user) }, token: signToken(user) };
 };
 
-const staffLogin = async ({ phone, password }) => {
-  const result = await login({ phone, password });
-  if (!isStaffUser(result.user)) {
+const staffLogin = async ({ phone, password }, context = {}) => {
+  const user = await User.findOne({ phone: normalizePhone(phone) })
+    .select('+password +staffLoginChallenge.challengeId +staffLoginChallenge.codeHash +staffLoginChallenge.expiresAt +staffLoginChallenge.requestedAt +staffLoginChallenge.consumedAt +staffLoginChallenge.attemptsRemaining');
+  if (!user || !(await user.comparePassword(password))) {
+    await authEvents.record({
+      type: 'staff_login_password_failed',
+      outcome: 'failed',
+      user,
+      phone,
+      context,
+      detail: user ? null : 'Unknown phone number',
+    });
+    throw ApiError.unauthorized('Invalid phone or password');
+  }
+  const legacyStaffLevel = ['support', 'super_admin'].includes(user.role)
+    ? user.role
+    : user.role === 'admin' && !user.adminLevel ? 'super_admin' : null;
+  if (!isStaffUser(user) && !legacyStaffLevel) {
+    await authEvents.record({ type: 'staff_login_not_staff', outcome: 'denied', user, context });
     throw ApiError.forbidden('Staff access is not enabled for this account');
   }
-  return result;
+  if (user.status !== 'active') throw ApiError.forbidden('Account is suspended');
+  if (user.phoneVerified !== true) throw ApiError.forbidden('Phone number not verified');
+
+  // Legacy staff records stored the access level directly in `role`. The current
+  // schema keeps the broad role as `admin` and the precise level in `adminLevel`.
+  user.isStaff = true;
+  if (!user.adminLevel && legacyStaffLevel) user.adminLevel = legacyStaffLevel;
+  if (user.role !== 'admin') user.role = 'admin';
+
+  const code = generateStaffLoginCode();
+  const now = new Date();
+  const challengeId = crypto.randomUUID();
+  user.staffLoginChallenge = {
+    challengeId,
+    codeHash: hashResetCode(code),
+    requestedAt: now,
+    expiresAt: new Date(now.getTime() + config.sms.staffLoginCodeTtlMinutes * 60 * 1000),
+    consumedAt: null,
+    attemptsRemaining: 5,
+  };
+  await user.save();
+  await smsService.sendStaffLoginCode({ phone: user.phone, code });
+  await authEvents.record({ type: 'staff_login_code_sent', outcome: 'success', user, context });
+
+  return {
+    verificationRequired: true,
+    challengeId,
+    maskedPhone: `******${user.phone.slice(-4)}`,
+    expiresInSeconds: config.sms.staffLoginCodeTtlMinutes * 60,
+    attemptsRemaining: 5,
+  };
+};
+
+const verifyStaffLogin = async ({ challengeId, code }, context = {}) => {
+  const now = new Date();
+  const codeHash = hashResetCode(code);
+  const user = await User.findOneAndUpdate(
+    {
+      isStaff: true,
+      status: 'active',
+      phoneVerified: true,
+      'staffLoginChallenge.challengeId': challengeId,
+      'staffLoginChallenge.codeHash': codeHash,
+      'staffLoginChallenge.expiresAt': { $gt: now },
+      'staffLoginChallenge.consumedAt': null,
+      'staffLoginChallenge.attemptsRemaining': { $gt: 0 },
+    },
+    { $set: { 'staffLoginChallenge.consumedAt': now } },
+    { new: true }
+  );
+
+  if (!user) {
+    await User.updateOne(
+      {
+        'staffLoginChallenge.challengeId': challengeId,
+        'staffLoginChallenge.expiresAt': { $gt: now },
+        'staffLoginChallenge.consumedAt': null,
+        'staffLoginChallenge.attemptsRemaining': { $gt: 0 },
+      },
+      { $inc: { 'staffLoginChallenge.attemptsRemaining': -1 } }
+    );
+    const challengeOwner = await User.findOne({ 'staffLoginChallenge.challengeId': challengeId }).select('phone').lean();
+    await authEvents.record({
+      type: 'staff_login_code_failed',
+      outcome: 'failed',
+      user: challengeOwner,
+      context,
+      detail: challengeOwner ? 'Invalid, expired or already used code' : 'Unknown challenge',
+    });
+    throw ApiError.unauthorized('Verification code is invalid, expired, or already used');
+  }
+
+  await authEvents.record({ type: 'staff_login_success', outcome: 'success', user, context });
+  return { user: user.toJSON(), token: signToken(user, { mfa: true }) };
+};
+
+const resendStaffLoginCode = async ({ challengeId }) => {
+  const user = await User.findOne({
+    isStaff: true,
+    status: 'active',
+    'staffLoginChallenge.challengeId': challengeId,
+    'staffLoginChallenge.consumedAt': null,
+  }).select('+staffLoginChallenge.challengeId +staffLoginChallenge.codeHash +staffLoginChallenge.expiresAt +staffLoginChallenge.requestedAt +staffLoginChallenge.consumedAt +staffLoginChallenge.attemptsRemaining');
+  if (!user) throw ApiError.badRequest('Sign-in challenge is no longer available');
+
+  const code = generateStaffLoginCode();
+  const now = new Date();
+  user.staffLoginChallenge.codeHash = hashResetCode(code);
+  user.staffLoginChallenge.requestedAt = now;
+  user.staffLoginChallenge.expiresAt = new Date(
+    now.getTime() + config.sms.staffLoginCodeTtlMinutes * 60 * 1000
+  );
+  user.staffLoginChallenge.attemptsRemaining = 5;
+  await user.save();
+  await smsService.sendStaffLoginCode({ phone: user.phone, code });
+  return { expiresInSeconds: config.sms.staffLoginCodeTtlMinutes * 60, attemptsRemaining: 5 };
 };
 
 const verifyPhone = async ({ phone, code }) => {
@@ -306,6 +421,8 @@ module.exports = {
   requestPasswordReset,
   resetPassword,
   staffLogin,
+  verifyStaffLogin,
+  resendStaffLoginCode,
   getById,
   setActiveWallet,
   updateStaffAccess,

@@ -5,7 +5,12 @@ const controller = require('./user.controller');
 const schemas = require('./user.validation');
 const validate = require('../../middlewares/validate');
 const { authenticate, authorizeStaff } = require('../../middlewares/auth');
-const { authLimiter } = require('../../middlewares/rateLimiter');
+const {
+  authLimiter,
+  staffLoginLimiter,
+  staffLoginVerificationLimiter,
+  staffLoginResendLimiter,
+} = require('../../middlewares/rateLimiter');
 
 const router = Router();
 
@@ -15,7 +20,19 @@ router.post('/verify-phone', authLimiter, validate({ body: schemas.verifyPhone }
 router.post('/resend-phone-code', authLimiter, validate({ body: schemas.resendPhoneCode }), controller.resendPhoneCode);
 router.post('/request-password-reset', authLimiter, validate({ body: schemas.requestPasswordReset }), controller.requestPasswordReset);
 router.post('/reset-password', authLimiter, validate({ body: schemas.resetPassword }), controller.resetPassword);
-router.post('/staff-login', authLimiter, validate({ body: schemas.login }), controller.staffLogin);
+router.post('/staff-login', staffLoginLimiter, validate({ body: schemas.login }), controller.staffLogin);
+router.post(
+  '/verify-staff-login',
+  staffLoginVerificationLimiter,
+  validate({ body: schemas.staffLoginVerification }),
+  controller.verifyStaffLogin
+);
+router.post(
+  '/resend-staff-login-code',
+  staffLoginResendLimiter,
+  validate({ body: schemas.staffLoginResend }),
+  controller.resendStaffLoginCode
+);
 
 router.get('/me', authenticate, controller.me);
 router.patch(

@@ -34,8 +34,10 @@ const resetPassword = asyncHandler(async (req, res) => {
   sendSuccess(res, { message: 'Password reset successful' });
 });
 
+const authContext = (req) => ({ ip: req.ip, userAgent: req.get('user-agent') || null });
+
 const staffLogin = asyncHandler(async (req, res) => {
-  const result = await userService.staffLogin(req.body);
+  const result = await userService.staffLogin(req.body, authContext(req));
   sendSuccess(res, { message: 'Staff logged in', data: result });
 });
 
@@ -59,4 +61,14 @@ const credit = asyncHandler(async (req, res) => {
   sendSuccess(res, { message: 'Account credited', data: user });
 });
 
-module.exports = { register, login, verifyPhone, resendPhoneCode, requestPasswordReset, resetPassword, staffLogin, me, setActiveWallet, updateStaffAccess, credit };
+const verifyStaffLogin = asyncHandler(async (req, res) => {
+  const result = await userService.verifyStaffLogin(req.body, authContext(req));
+  sendSuccess(res, { message: 'Staff verification successful', data: result });
+});
+
+const resendStaffLoginCode = asyncHandler(async (req, res) => {
+  const result = await userService.resendStaffLoginCode(req.body);
+  sendSuccess(res, { message: 'A new sign-in code was sent by SMS', data: result });
+});
+
+module.exports = { register, login, verifyPhone, resendPhoneCode, requestPasswordReset, resetPassword, staffLogin, verifyStaffLogin, resendStaffLoginCode, me, setActiveWallet, updateStaffAccess, credit };

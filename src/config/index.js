@@ -127,6 +127,7 @@ const config = Object.freeze({
     senderName: process.env.SMS_SENDER_NAME || process.env.SMS_SHORTCODE || 'IMPALA LTD',
     resetCodeTtlMinutes: parseInt(process.env.SMS_RESET_CODE_TTL_MINUTES, 10) || 10,
     phoneVerificationTtlMinutes: parseInt(process.env.SMS_PHONE_VERIFICATION_TTL_MINUTES, 10) || 10,
+    staffLoginCodeTtlMinutes: parseInt(process.env.STAFF_LOGIN_CODE_TTL_MINUTES, 10) || 10,
   },
 });
 

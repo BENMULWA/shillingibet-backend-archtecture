@@ -22,6 +22,18 @@ const phoneVerificationSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const staffLoginChallengeSchema = new mongoose.Schema(
+  {
+    challengeId: { type: String, select: false },
+    codeHash: { type: String, select: false },
+    expiresAt: { type: Date, select: false },
+    requestedAt: { type: Date, select: false },
+    consumedAt: { type: Date, select: false, default: null },
+    attemptsRemaining: { type: Number, select: false, min: 0, max: 5 },
+  },
+  { _id: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
     phone: {
@@ -101,12 +113,14 @@ const userSchema = new mongoose.Schema(
       frozenAmount: { type: Number, default: 0, min: 0 },
     },
     deletedAt: { type: Date, default: null, index: true },
+    staffLoginChallenge: { type: staffLoginChallengeSchema, default: () => ({}) },
   },
   {
     timestamps: true,
     toJSON: {
       transform(_doc, ret) {
         delete ret.password;
+        delete ret.staffLoginChallenge;
         delete ret.__v;
         return ret;
       },

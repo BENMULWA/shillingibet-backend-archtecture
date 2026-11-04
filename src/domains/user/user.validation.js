@@ -31,6 +31,15 @@ const login = z.object({
   password: z.string().min(1),
 });
 
+const staffLoginVerification = z.object({
+  challengeId: z.string().uuid(),
+  code: z.string().regex(/^\d{6}$/, 'Verification code must be 6 digits'),
+});
+
+const staffLoginResend = z.object({
+  challengeId: z.string().uuid(),
+});
+
 const verifyPhone = z.object({
   phone,
   code: z.string().regex(/^\d{4,8}$/, 'Verification code must be 4 to 8 digits'),
@@ -65,4 +74,6 @@ const activeWallet = z.object({
   wallet: walletTypeValue,
 });
 
-module.exports = { register, login, verifyPhone, resendPhoneCode, requestPasswordReset, resetPassword, staffAccess, credit, activeWallet };
+module.exports = {
+  staffLoginVerification,
+  staffLoginResend, register, login, verifyPhone, resendPhoneCode, requestPasswordReset, resetPassword, staffAccess, credit, activeWallet };

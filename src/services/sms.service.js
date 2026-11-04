@@ -39,6 +39,16 @@ const sendPasswordResetCode = ({ phone, code }) =>
     message: `${config.sms.senderName}: your password reset code is ${code}. It expires in ${config.sms.resetCodeTtlMinutes} minutes.`,
   });
 
+const sendStaffLoginCode = async ({ phone, code }) => {
+  const message = `${config.sms.senderName}: your admin sign-in code is ${code}. It expires in ${config.sms.staffLoginCodeTtlMinutes} minutes. Do not share this code.`;
+  // Local development without an SMS gateway: print the code instead of failing the sign-in.
+  if (process.env.NODE_ENV !== 'production' && (!config.sms.enabled || !smsClient.isConfigured())) {
+    logger.warn(`[dev] staff sign-in code for ${phone}: ${code}`);
+    return { sent: false, dev: true };
+  }
+  return send({ phone, context: 'staff_login_verification', message });
+};
+
 const sendPhoneVerificationCode = ({ phone, code }) =>
   send({
     phone,
@@ -87,6 +97,7 @@ module.exports = {
   send,
   safeSend,
   sendPasswordResetCode,
+  sendStaffLoginCode,
   sendPhoneVerificationCode,
   safeSendPhoneVerificationCode,
   sendSignupWelcome,
