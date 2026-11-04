@@ -17,6 +17,7 @@ const Transaction = require('./transaction.model');
 const User = require('../user/user.model');
 const { qualifiesForReferralBonus } = require('../user/referral');
 const payoutFloatService = require('../admin/payoutFloat.service');
+const notificationService = require('../notification/notification.service');
 
 const makeRef = (prefix) => `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -64,6 +65,41 @@ const deposit = async (user, { amount, phone, provider, walletType: requestedWal
     await txn.save();
     throw err;
   }
+};
+
+// Mamlaka can refuse a payout in its immediate reply (for example when its own
+// payout balance is too low). That is a final answer: give the player their money
+// back and release the float, instead of leaving the withdrawal "pending" forever.
+const PROVIDER_REFUSAL_MESSAGES = {
+  INSUFFICIENT_BALANCE: 'Withdrawals are temporarily unavailable. Please try again later.',
+};
+
+const settleRejectedWithdrawal = async (txn) => {
+  const res = txn?.providerResponse;
+  if (!res || txn.type !== 'withdrawal' || txn.status !== 'pending') return false;
+  if (mapStatus(res.transactionStatus || res.status) !== 'failed') return false;
+
+  const reason = PROVIDER_REFUSAL_MESSAGES[String(res.error || '').toUpperCase()]
+    || res.message
+    || 'The payout was declined. Please try again later.';
+  await handleCallback('withdraw', {
+    ...res,
+    externalId: txn.externalId,
+    reason,
+    transactionReport: reason,
+  });
+
+  if (String(res.error || '').toUpperCase() === 'INSUFFICIENT_BALANCE') {
+    await notificationService.create({
+      type: 'payout_provider_balance',
+      severity: 'critical',
+      title: 'Payout account is out of funds',
+      message: `A KES ${txn.amount} withdrawal was refused because the Mamlaka payout balance is too low. Top up the payout account.`,
+      relatedId: String(txn._id),
+      dedupeKey: 'payout-provider-insufficient-balance',
+    });
+  }
+  return true;
 };
 
 const withdraw = async (user, { amount, phone, provider, walletType: requestedWalletType }) => {
@@ -161,6 +197,11 @@ const withdraw = async (user, { amount, phone, provider, walletType: requestedWa
     }
 
     await txn.save();
+
+    if (!isAirtimeWithdrawal && (await settleRejectedWithdrawal(txn))) {
+      const settled = await Transaction.findById(txn._id).lean();
+      return settled || txn.toJSON();
+    }
 
     if (usesPayoutFloat && txn.status === 'failed') {
       await payoutFloatService.settlePayout(externalId, { refund: true });
@@ -518,6 +559,10 @@ const listForAdmin = async ({ type, status, phone, page, limit }) => {
 const getById = async (userId, id) => {
   let txn = await Transaction.findOne({ _id: id, user: userId }).lean();
   if (!txn) throw ApiError.notFound('Transaction not found');
+
+  if (txn.status === 'pending' && (await settleRejectedWithdrawal(txn))) {
+    txn = await Transaction.findOne({ _id: id, user: userId }).lean();
+  }
 
   if (txn.status === 'pending' && (txn.secureId || txn.externalId)) {
     try {
