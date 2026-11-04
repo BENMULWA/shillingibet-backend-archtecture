@@ -1,6 +1,6 @@
 'use strict';
 
-const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
+const { rateLimit } = require('express-rate-limit');
 const config = require('../config');
 
 const PROVIDER_CALLBACKS = ['/virtuals/player_info', '/virtuals/bet', '/virtuals/win', '/virtuals/rollback'];
@@ -10,7 +10,7 @@ const isProviderCallback = (req) =>
   req.path === '/wallet/billOrder/callback' ||
   PROVIDER_CALLBACKS.includes(req.path);
 
-const perUserKey = (req, res) => (req.user ? `user:${req.user._id}` : ipKeyGenerator(req, res));
+const perUserKey = (req, res) => (req.user ? `user:${req.user._id}` : req.ip);
 
 const makeUserLimiter = ({ windowMs, max, message, skipFailedRequests = false }) =>
   rateLimit({
@@ -52,8 +52,8 @@ const staffLimiter = ({ max, keyOf, message }) =>
     message: { success: false, message },
   });
 
-const perChallenge = (req, res) => `challenge:${req.body?.challengeId || ipKeyGenerator(req, res)}`;
-const perIpAndPhone = (req, res) => `${ipKeyGenerator(req, res)}:${String(req.body?.phone || '').slice(-9)}`;
+const perChallenge = (req, res) => `challenge:${req.body?.challengeId || req.ip}`;
+const perIpAndPhone = (req, res) => `${req.ip}:${String(req.body?.phone || '').slice(-9)}`;
 
 const staffLoginLimiter = staffLimiter({
   max: 5,
