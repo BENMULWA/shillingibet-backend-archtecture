@@ -10,6 +10,7 @@ const adminRoutes = require('./domains/admin/admin.routes');
 const walletRoutes = require('./domains/wallet/wallet.routes');
 const supportAdminRoutes = require('./domains/support/supportAdmin.routes');
 const supportCustomerRoutes = require('./domains/support/supportCustomer.routes');
+const announcementRoutes = require('./domains/announcement/announcement.routes');
 
 const router = Router();
 
@@ -23,6 +24,7 @@ router.use('/bets', betRoutes);
 router.use('/transactions', transactionRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/virtuals', virtualRoutes);
+router.use('/announcements', announcementRoutes);
 router.use('/admin', adminRoutes);
 // Players' own chat history first, so it never goes through the staff-only routes below.
 router.use('/support-chat/me', supportCustomerRoutes);

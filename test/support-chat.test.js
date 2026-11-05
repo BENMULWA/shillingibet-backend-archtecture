@@ -69,7 +69,7 @@ const startServer = async () => {
     return originalLoad.call(this, request, parent, isMain);
   };
   delete require.cache[chatPath];
-  const { attachSupportChat } = require(chatPath);
+  const { attachSupportChat, broadcastAnnouncement } = require(chatPath);
   Module._load = originalLoad;
 
   const server = http.createServer();
@@ -77,7 +77,7 @@ const startServer = async () => {
   await new Promise((resolve) => server.listen(0, resolve));
   const url = `http://127.0.0.1:${server.address().port}`;
   const token = (sub, extra = {}) => jwt.sign({ sub, ...extra }, SECRET);
-  return { url, token, store, close: () => new Promise((resolve) => { io.close(); server.close(resolve); }) };
+  return { url, token, store, broadcast: broadcastAnnouncement, close: () => new Promise((resolve) => { io.close(); server.close(resolve); }) };
 };
 
 const wait = (socket, event, ms = 3000) =>
@@ -138,18 +138,46 @@ test('a connection with no valid token is refused', async () => {
   }
 });
 
-test('the community chat shows each message to everyone including the sender', async () => {
+test('announcements reach every connected player live, and players cannot post to them', async () => {
   const srv = await startServer();
-  const a = connect(`${srv.url}/community-chat`, { auth: { token: srv.token('cust1') }, transports: ['websocket'] });
+  const a = connect(`${srv.url}/announcements`, { auth: { token: srv.token('cust1') }, transports: ['websocket'] });
+  const b = connect(`${srv.url}/announcements`, { auth: { token: srv.token('agent1') }, transports: ['websocket'] });
   try {
-    await wait(a, 'chat:history');
-    const echo = wait(a, 'chat:new_message');
-    a.emit('chat:send_message', { content: 'Habari wote', clientId: 'x1' });
-    const msg = await echo;
-    assert.equal(msg.content, 'Habari wote');
-    assert.equal(msg.clientId, 'x1');
+    await wait(a, 'connect');
+    await wait(b, 'connect');
+
+    const gotA = wait(a, 'announcement:new');
+    const gotB = wait(b, 'announcement:new');
+    srv.broadcast('announcement:new', { id: 'n1', title: 'We are back', message: 'Welcome back, please log in.' });
+    assert.equal((await gotA).message, 'Welcome back, please log in.');
+    assert.equal((await gotB).title, 'We are back');
+
+    // Removing an announcement is pushed too.
+    const removed = wait(a, 'announcement:removed');
+    srv.broadcast('announcement:removed', { id: 'n1' });
+    assert.equal((await removed).id, 'n1');
+
+    // A player trying to talk into the channel changes nothing for anyone else.
+    let leaked = false;
+    b.once('chat:new_message', () => { leaked = true; });
+    b.once('announcement:new', () => { leaked = true; });
+    a.emit('chat:send_message', { content: 'hello everyone' });
+    a.emit('announcement:new', { id: 'fake', message: 'fake' });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(leaked, false);
   } finally {
-    a.close(); await srv.close();
+    a.close(); b.close(); await srv.close();
+  }
+});
+
+test('the old public community room is gone', async () => {
+  const srv = await startServer();
+  const c = connect(`${srv.url}/community-chat`, { auth: { token: srv.token('cust1') }, transports: ['websocket'], reconnection: false });
+  try {
+    const error = await wait(c, 'connect_error');
+    assert.match(error.message, /Invalid namespace/i);
+  } finally {
+    c.close(); await srv.close();
   }
 });
 

@@ -43,6 +43,13 @@ const authenticateSocket = async (socket, next) => {
   }
 };
 
+let ioInstance = null;
+
+// Push an announcement event to every connected player (no-op until the server is up).
+const broadcastAnnouncement = (event, payload) => {
+  if (ioInstance) ioInstance.of('/announcements').emit(event, payload);
+};
+
 const attachSupportChat = (httpServer) => {
   const { credentials } = config.cors;
   const io = new Server(httpServer, {
@@ -56,60 +63,15 @@ const attachSupportChat = (httpServer) => {
   });
 
   const namespace = io.of('/support-chat');
-  const community = io.of('/community-chat');
+  const announcements = io.of('/announcements');
+  ioInstance = io;
   let activeCustomers = 0;
 
   namespace.use(authenticateSocket);
-  community.use(authenticateSocket);
+  announcements.use(authenticateSocket);
 
-  const communityMessages = [];
-  let communityUsers = 0;
-
-  community.on('connection', (socket) => {
-    communityUsers += 1;
-    const userId = String(socket.data.user._id);
-    const username = socket.data.user.username || socket.data.user.name || socket.data.user.phone;
-
-    socket.emit('chat:history', {
-      user: socket.data.user,
-      messages: communityMessages,
-      activeUsers: communityUsers,
-    });
-    socket.broadcast.emit('chat:user_joined', { username, activeUsers: communityUsers });
-
-    socket.on(
-      'chat:send_message',
-      ({ content, messageType = 'text', replyTo = null, clientId = null } = {}) => {
-      const normalizedContent = String(content || '').trim().slice(0, 1000);
-      if (!normalizedContent) return;
-      const message = {
-        _id: randomUUID(),
-        senderId: userId,
-        senderType: 'customer',
-        senderUsername: username,
-        content: normalizedContent,
-        messageType,
-        replyTo,
-        clientId,
-        createdAt: new Date().toISOString(),
-      };
-      communityMessages.push(message);
-      if (communityMessages.length > 100) communityMessages.shift();
-      community.emit('chat:new_message', message);
-      },
-    );
-
-    socket.on('chat:typing', () => {
-      socket.broadcast.emit('chat:user_typing', { username });
-    });
-    socket.on('chat:stop_typing', () => {
-      socket.broadcast.emit('chat:user_stop_typing', { username });
-    });
-    socket.on('disconnect', () => {
-      communityUsers = Math.max(0, communityUsers - 1);
-      socket.broadcast.emit('chat:user_left', { username, activeUsers: communityUsers });
-    });
-  });
+  // Announcements are one-way: the server pushes them to connected players. Players cannot post.
+  announcements.on('connection', () => {});
 
   const emitQueue = async () => {
     const sessions = await supportStore.listWaiting();
@@ -451,4 +413,4 @@ const attachSupportChat = (httpServer) => {
   return io;
 };
 
-module.exports = { attachSupportChat, authenticateSocket, cleanToken };
+module.exports = { attachSupportChat, authenticateSocket, broadcastAnnouncement, cleanToken };

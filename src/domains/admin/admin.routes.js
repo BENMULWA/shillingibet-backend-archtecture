@@ -7,6 +7,8 @@ const mgmt = require('./admin.management.validation');
 const adminAudit = require('../../middlewares/adminAudit');
 const validate = require('../../middlewares/validate');
 const { authenticate, authorizeStaff } = require('../../middlewares/auth');
+const announcementController = require('../announcement/announcement.controller');
+const announcementSchemas = require('../announcement/announcement.validation');
 
 const router = Router();
 
@@ -32,6 +34,11 @@ router.post(
 );
 
 const admin = authorizeStaff('admin', 'super_admin');
+
+// Announcements to all players (shown in the site's Announcements tab)
+router.get('/announcements', admin, validate({ query: announcementSchemas.list }), announcementController.list);
+router.post('/announcements', admin, validate({ body: announcementSchemas.create }), announcementController.create);
+router.delete('/announcements/:id', admin, validate({ params: announcementSchemas.params }), announcementController.remove);
 const superAdmin = authorizeStaff('super_admin');
 
 // Audit trail
