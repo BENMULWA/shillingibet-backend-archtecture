@@ -153,7 +153,8 @@ const withdrawComet = async (user, { amount, email, walletType: requestedWalletT
       walletAppliedAt: new Date(),
     });
   } catch (error) {
-    await User.updateOne({ _id: user._id }, incWalletBalance('balance', payoutAmount));
+    // Give the money back to the wallet it was taken from (main or airtime).
+    await User.updateOne({ _id: user._id }, incWalletBalance(walletType, payoutAmount));
     if (usesPayoutFloat) await payoutFloatService.settlePayout(externalId, { refund: true });
     throw error;
   }

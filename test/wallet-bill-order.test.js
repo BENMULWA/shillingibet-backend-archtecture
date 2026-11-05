@@ -17,6 +17,7 @@ const loadService = ({ providerResponse, providerError, transaction = null } = {
     floatAlert: null,
     floatSettlements: [],
     floatError: null,
+    createError: null,
   };
 
   Module._load = function mockLoad(request, parent, isMain) {
@@ -69,6 +70,7 @@ const loadService = ({ providerResponse, providerError, transaction = null } = {
     if (request === '../transaction/transaction.model' && parent?.filename === servicePath) {
       return {
         create: async (payload) => {
+          if (state.createError) throw state.createError;
           const txn = {
             ...payload,
             status: 'pending',
@@ -541,6 +543,25 @@ test('withdrawComet refunds the wallet when Comet explicitly declines a payout',
   assert.equal(state.walletUpdates[1].update[0].$set.balance.$round[0].$add[1], 10);
   assert.equal(state.createdTransactions[0].status, 'failed');
   assert.equal(state.floatSettlements.at(-1).options.refund, true);
+});
+
+test('withdrawComet refunds the airtime wallet, not the main wallet, when saving the withdrawal fails', async () => {
+  const { service, state } = loadService();
+  state.createError = new Error('database unavailable');
+
+  await assert.rejects(
+    service.withdrawComet(
+      { _id: 'user-1', phone: '254700000002' },
+      { amount: 10, email: 'player@example.com', walletType: 'airtime' }
+    ),
+    /database unavailable/
+  );
+
+  assert.equal(state.walletUpdates.length, 2);
+  const refund = state.walletUpdates[1].update[0].$set;
+  assert.ok(refund.airtimeBalance, 'refund must go to airtimeBalance');
+  assert.equal(refund.balance, undefined);
+  assert.equal(refund.airtimeBalance.$round[0].$add[1], 10);
 });
 
 test('withdrawComet blocks KES payouts before debiting the player when float is insufficient', async () => {
