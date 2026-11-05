@@ -146,6 +146,12 @@ const attachSupportChat = (httpServer) => {
     createdAt: new Date().toISOString(),
   });
 
+  // Tell the customer (and any other viewer) which of their messages an agent has now seen.
+  const emitRead = async (sessionId, agentId) => {
+    const receipt = await supportStore.markCustomerMessagesRead(sessionId, agentId);
+    if (receipt) namespace.to(`session:${sessionId}`).emit('chat:read', receipt);
+  };
+
   namespace.on('connection', async (socket) => {
     const userId = String(socket.data.user._id);
 
@@ -308,6 +314,7 @@ const attachSupportChat = (httpServer) => {
         sessionId,
         agent: { name: socket.data.user.name || socket.data.user.phone },
       });
+      await emitRead(sessionId, userId);
       await Promise.all([emitQueue(), emitStats()]);
     });
 
@@ -322,6 +329,12 @@ const attachSupportChat = (httpServer) => {
         session: supportStore.toPublicSession(session),
         messages: (session.messages || []).map(supportStore.toPublicMessage),
       });
+      await emitRead(sessionId, userId);
+    });
+
+    // The agent's screen shows the chat and a new customer message just arrived.
+    onAsync(socket, 'agent:mark_read', async ({ sessionId } = {}) => {
+      await emitRead(sessionId, userId);
     });
 
     onAsync(socket, 'agent:transfer_chat', async ({ sessionId, toAgentId, reason } = {}) => {
@@ -391,6 +404,7 @@ const attachSupportChat = (httpServer) => {
       if (!updated) return;
       socket.to(`session:${sessionId}`).emit('chat:new_message', message);
       socket.emit('agent:message_sent', { tempId, messageId: message._id });
+      await emitRead(sessionId, userId);
     });
 
     socket.on('agent:typing', ({ sessionId } = {}) => {

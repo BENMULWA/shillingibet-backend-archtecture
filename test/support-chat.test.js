@@ -36,6 +36,15 @@ const makeStore = () => {
     async getStats() { return { todayChats: 1, totalChats: 1, queuedChats: 0, activeChats: 0 }; },
     async claimSession(id, agentId) { const s = sessions.get(id); if (!s || s.status !== 'waiting') return null; s.status = 'active'; s.assignedAgentId = agentId; return s; },
     async closeSession(id) { const s = sessions.get(id); if (!s) return null; s.status = 'closed'; s.open = false; return s; },
+    async markCustomerMessagesRead(id, agentId) {
+      const s = sessions.get(id);
+      if (!s || s.status !== 'active' || s.assignedAgentId !== agentId) return null;
+      const unread = s.messages.filter((m) => m.senderType === 'customer' && !m.readAt);
+      if (!unread.length) return null;
+      const readAt = new Date().toISOString();
+      unread.forEach((m) => { m.readAt = readAt; });
+      return { sessionId: id, messageIds: unread.map((m) => m._id), readAt };
+    },
   };
 };
 
@@ -141,5 +150,52 @@ test('the community chat shows each message to everyone including the sender', a
     assert.equal(msg.clientId, 'x1');
   } finally {
     a.close(); await srv.close();
+  }
+});
+
+test('the customer learns when an agent has seen their messages (read receipts)', async () => {
+  const srv = await startServer();
+  const customer = connect(`${srv.url}/support-chat`, { auth: { token: srv.token('cust1') }, transports: ['websocket'] });
+  const agent = connect(`${srv.url}/support-chat`, { auth: { token: srv.token('agent1', { mfa: true }) }, transports: ['websocket'] });
+  try {
+    await wait(customer, 'chat:history');
+    await wait(agent, 'connect');
+    agent.emit('agent:go_online');
+    await wait(agent, 'agent:online_confirmed');
+
+    const first = wait(agent, 'agent:customer_message');
+    const echo = wait(customer, 'chat:new_message');
+    customer.emit('chat:send_message', { content: 'Are you there?', clientId: 'c-1' });
+    const sent = await echo;
+    const { sessionId } = await first;
+
+    // Nobody has opened the chat yet, so nothing is marked as seen.
+    assert.equal(srv.store.sessions.get(sessionId).messages[0].readAt, undefined);
+
+    // The agent opens the chat: the customer is told the message was seen.
+    const seen = wait(customer, 'chat:read');
+    agent.emit('agent:accept_chat', { sessionId });
+    const receipt = await seen;
+    assert.deepEqual(receipt.messageIds, [sent._id]);
+    assert.ok(receipt.readAt);
+
+    // A later message is marked as seen when the agent's screen reports it.
+    const second = wait(agent, 'agent:customer_message');
+    const echo2 = wait(customer, 'chat:new_message');
+    customer.emit('chat:send_message', { content: 'Hello?', clientId: 'c-2' });
+    const sent2 = await echo2;
+    await second;
+    const seen2 = wait(customer, 'chat:read');
+    agent.emit('agent:mark_read', { sessionId });
+    assert.deepEqual((await seen2).messageIds, [sent2._id]);
+
+    // Nothing new to mark: no extra receipt is sent.
+    let extra = false;
+    customer.once('chat:read', () => { extra = true; });
+    agent.emit('agent:mark_read', { sessionId });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(extra, false);
+  } finally {
+    customer.close(); agent.close(); await srv.close();
   }
 });

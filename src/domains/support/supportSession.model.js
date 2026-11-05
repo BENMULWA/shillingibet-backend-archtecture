@@ -13,6 +13,8 @@ const supportMessageSchema = new mongoose.Schema(
     replyTo: { type: mongoose.Schema.Types.Mixed, default: null },
     clientId: { type: String, default: null },
     createdAt: { type: Date, required: true, default: Date.now },
+    // When a support agent saw this customer message (null until then).
+    readAt: { type: Date, default: null },
   },
   { _id: false }
 );

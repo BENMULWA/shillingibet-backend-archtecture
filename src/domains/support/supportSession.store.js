@@ -26,6 +26,7 @@ const toPublicMessage = (message) => ({
   replyTo: message.replyTo,
   clientId: message.clientId,
   createdAt: message.createdAt,
+  readAt: message.readAt || null,
 });
 
 const serializeSession = (session) => ({
@@ -130,6 +131,26 @@ const appendMessage = async (sessionId, message, owner = {}) => {
   ).lean();
 };
 
+// An agent has seen the customer's messages: stamp every unread one with the time.
+// Returns the ids that changed (or null when there was nothing new to mark).
+const markCustomerMessagesRead = async (sessionId, agentId) => {
+  const session = await SupportSession.findOne({ sessionId, status: 'active', assignedAgentId: agentId }).lean();
+  if (!session) return null;
+
+  const messageIds = (session.messages || [])
+    .filter((message) => message.senderType === 'customer' && !message.readAt)
+    .map((message) => message.messageId);
+  if (!messageIds.length) return null;
+
+  const readAt = new Date();
+  await SupportSession.updateOne(
+    { sessionId },
+    { $set: { 'messages.$[m].readAt': readAt } },
+    { arrayFilters: [{ 'm.senderType': 'customer', 'm.readAt': null }] }
+  );
+  return { sessionId, messageIds, readAt: readAt.toISOString() };
+};
+
 const claimSession = (sessionId, agentId) =>
   SupportSession.findOneAndUpdate(
     { sessionId, status: 'waiting' },
@@ -196,6 +217,7 @@ module.exports = {
   listAssigned,
   listClosed,
   listWaiting,
+  markCustomerMessagesRead,
   transferSession,
   serializeSession,
   toPublicMessage,
