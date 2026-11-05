@@ -593,6 +593,7 @@ const getById = async (userId, id) => {
 module.exports = {
   deposit,
   withdraw,
+  settleRejectedWithdrawal,
   handleCallback,
   handleMamlakaCallback,
   listForUser,
