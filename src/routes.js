@@ -8,6 +8,7 @@ const transactionRoutes = require('./domains/transaction/transaction.routes');
 const virtualRoutes = require('./domains/virtual/virtual.routes');
 const adminRoutes = require('./domains/admin/admin.routes');
 const walletRoutes = require('./domains/wallet/wallet.routes');
+const supportAdminRoutes = require('./domains/support/supportAdmin.routes');
 
 const router = Router();
 
@@ -22,5 +23,6 @@ router.use('/transactions', transactionRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/virtuals', virtualRoutes);
 router.use('/admin', adminRoutes);
+router.use('/support-chat', supportAdminRoutes);
 
 module.exports = router;
