@@ -135,7 +135,7 @@ const launch = async (req, res) => {
     if (!user) return res.status(404).json({ status: false, message: 'user_not_found' });
 
     const isDemo = demo ? 1 : 0;
-    const playerToken = isDemo ? null : await service.issueSession(user._id);
+    const playerToken = isDemo ? null : await service.issueSession(user._id, user.activeWallet);
 
     const r = await client.launchGame({
       playerId: user._id,

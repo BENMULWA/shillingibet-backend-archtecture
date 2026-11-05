@@ -8,6 +8,12 @@ const client = require('../../integrations/eurovirtuals/eurovirtuals.client');
 const User = require('../user/user.model');
 const VirtualTxn = require('./virtualTxn.model');
 const VirtualSession = require('./virtualSession.model');
+const {
+  incWalletBalance,
+  normalizeWalletType,
+  walletBalanceField,
+  walletBalanceQuery,
+} = require('../../utils/db');
 
 const round2 = (val) => Math.round((Number(val) || 0) * 100) / 100;
 const parsePositiveAmount = (val) => {
@@ -77,11 +83,8 @@ const ACCEPTED_WIN_STATUSES = new Set([...CREDIT_WIN_STATUSES, ...NO_CREDIT_WIN_
 const now = () =>
   new Date().toISOString().replace('T', ' ').slice(0, 19);
 
-const incPipeline = (delta) => [
-  // $ifNull guards documents written before `balance` existed — without it
-  // `$add` on a missing field yields null and silently wipes the balance.
-  { $set: { balance: { $round: [{ $add: [{ $ifNull: ['$balance', 0] }, delta] }, 2] } } },
-];
+// The player's balance in the wallet a game is using (main cash wallet or airtime wallet).
+const balanceOf = (userDoc, walletType) => round2(userDoc?.[walletBalanceField(walletType)]);
 
 const CODES = {
   SUCCESS: 200,
@@ -134,11 +137,30 @@ const resolvePlayerWithRequiredSession = async (playerId, playerToken) => {
   return user;
 };
 
-const issueSession = async (userId) => {
+// `walletType` is the wallet the player has active when opening the game. It stays fixed for
+// the whole session, so switching wallets later cannot move money between them mid-round.
+const issueSession = async (userId, walletType = 'balance') => {
   const token = crypto.randomBytes(24).toString('hex');
   const expiresAt = new Date(Date.now() + config.eurovirtuals.sessionTtlHours * 3600 * 1000);
-  await VirtualSession.create({ user: userId, token, expiresAt });
+  await VirtualSession.create({ user: userId, token, expiresAt, walletType: normalizeWalletType(walletType) });
   return token;
+};
+
+// Which wallet a callback belongs to: the one of the session the provider names, else the
+// player's most recent session, else the main wallet (also for sessions older than this feature).
+const resolveSessionWallet = async (user, playerToken) => {
+  if (playerToken) {
+    const session = await VirtualSession.findOne({ token: playerToken }).lean();
+    if (session && String(session.user) === String(user._id)) return normalizeWalletType(session.walletType);
+  }
+  const latest = await VirtualSession.findOne({ user: user._id }, null, { sort: { createdAt: -1 } }).lean();
+  return normalizeWalletType(latest?.walletType);
+};
+
+// Wins and refunds go back to the wallet the original bet was placed with.
+const resolveBetWallet = async (lookup, placeTxn) => {
+  const original = placeTxn || (await findPlaceTxn(lookup));
+  return normalizeWalletType(original?.walletType);
 };
 
 const playerInfo = async ({ body }) => {
@@ -151,14 +173,16 @@ const playerInfo = async ({ body }) => {
     return result(CODES.UNAUTHORISED, 'Unauthorised access');
   }
 
+  const walletType = await resolveSessionWallet(user, player_token);
   logger.info('EV player_info balance returned', {
     playerId: String(user._id),
-    balance: round2(user.balance),
+    wallet: walletType,
+    balance: balanceOf(user, walletType),
     currency: config.eurovirtuals.currency,
   });
 
   return result(CODES.SUCCESS, 'Success', {
-    balance: round2(user.balance),
+    balance: balanceOf(user, walletType),
     currency: config.eurovirtuals.currency,
     reference_id: crypto.randomUUID(),
     date: now(),
@@ -263,6 +287,7 @@ const placeBet = async ({ body }) => {
 
   const user = await resolvePlayer(player_id, player_token);
   if (!user) return result(CODES.UNAUTHORISED, 'Unauthorised access');
+  const walletType = await resolveSessionWallet(user, player_token);
 
   const debit = round2(amount);
   const cur = currency || config.eurovirtuals.currency;
@@ -271,21 +296,21 @@ const placeBet = async ({ body }) => {
   if (dup) {
     const fresh = await User.findById(user._id).lean();
     return {
-      ...result(CODES.SUCCESS, 'Success', { balance: round2(fresh.balance), currency: cur, reference_id: dup.referenceId, date: now() }),
+      ...result(CODES.SUCCESS, 'Success', { balance: balanceOf(fresh, walletType), currency: cur, reference_id: dup.referenceId, date: now() }),
       _isDuplicate: true,
     };
   }
 
   const debited = await User.findOneAndUpdate(
-    { _id: user._id, balance: { $gte: debit } },
-    incPipeline(-debit),
+    { _id: user._id, ...walletBalanceQuery(walletType, debit) },
+    incWalletBalance(walletType, -debit),
     { new: true }
   ).lean();
   if (!debited) {
     logger.warn('EV bet rejected for insufficient balance', {
       playerId: String(user._id),
       requestedAmount: debit,
-      observedBalance: round2(user.balance),
+      observedBalance: balanceOf(user, walletType),
       currency: cur,
     });
     return result(CODES.INSUFFICIENT, 'Insufficient Balance');
@@ -298,28 +323,29 @@ const placeBet = async ({ body }) => {
       betId: bet_id,
       providerTransactionId,
       action: 'place_bet',
+      walletType,
       type,
       gameUuid: game_uuid,
       gameName: game_name,
       currency: cur,
       amount: debit,
       delta: -debit,
-      balanceAfter: round2(debited.balance),
+      balanceAfter: balanceOf(debited, walletType),
       referenceId,
       operatorReferenceId,
       raw: body,
     });
   } catch (err) {
     if (err.code === 11000) {
-      await User.updateOne({ _id: user._id }, incPipeline(debit));
+      await User.updateOne({ _id: user._id }, incWalletBalance(walletType, debit));
       const fresh = await User.findById(user._id).lean();
-      return { ...result(CODES.SUCCESS, 'Success', { balance: round2(fresh.balance), currency: cur }), _isDuplicate: true };
+      return { ...result(CODES.SUCCESS, 'Success', { balance: balanceOf(fresh, walletType), currency: cur }), _isDuplicate: true };
     }
     throw err;
   }
 
   return result(CODES.SUCCESS, 'Success', {
-    balance: round2(debited.balance),
+    balance: balanceOf(debited, walletType),
     currency: cur,
     reference_id: referenceId,
     date: now(),
@@ -363,6 +389,10 @@ const winBet = async ({ body }) => {
   const { user, placeTxn } = playerContext;
   if (!user) return result(CODES.UNAUTHORISED, 'Unauthorised access');
 
+  const walletType = await resolveBetWallet(
+    { betId: bet_id, providerTransactionId, operatorReferenceId },
+    placeTxn
+  );
   const canonicalBetId = placeTxn?.betId || bet_id;
   const cur = currency || config.eurovirtuals.currency;
   const gameUuid = resolveProviderGameUuid(body) || placeTxn?.gameUuid || null;
@@ -380,7 +410,7 @@ const winBet = async ({ body }) => {
     const fresh = await User.findById(user._id).lean();
     return {
       ...result(CODES.SUCCESS, 'Success', {
-        balance: round2(fresh.balance),
+        balance: balanceOf(fresh, walletType),
         currency: cur,
         reference_id: dup.referenceId,
         date: now(),
@@ -392,7 +422,7 @@ const winBet = async ({ body }) => {
   if (NO_CREDIT_WIN_STATUSES.has(status)) {
     const fresh = await User.findById(user._id).lean();
     const referenceId = crypto.randomUUID();
-    const unchangedBalance = round2(fresh?.balance);
+    const unchangedBalance = balanceOf(fresh, walletType);
 
     try {
       await VirtualTxn.create({
@@ -415,7 +445,7 @@ const winBet = async ({ body }) => {
         const latest = await User.findById(user._id).lean();
         return {
           ...result(CODES.SUCCESS, 'Success', {
-            balance: round2(latest.balance),
+            balance: balanceOf(latest, walletType),
             currency: cur,
             date: now(),
           }),
@@ -436,13 +466,14 @@ const winBet = async ({ body }) => {
   const referenceId = crypto.randomUUID();
   const credited = await User.findByIdAndUpdate(
     user._id,
-    incPipeline(credit),
+    incWalletBalance(walletType, credit),
     { new: true }
   ).lean();
 
   try {
     await VirtualTxn.create({
       user: user._id,
+      walletType,
       betId: canonicalBetId,
       providerTransactionId,
       action,
@@ -451,17 +482,17 @@ const winBet = async ({ body }) => {
       currency: cur,
       payout: credit,
       delta: credit,
-      balanceAfter: round2(credited.balance),
+      balanceAfter: balanceOf(credited, walletType),
       referenceId,
       operatorReferenceId,
       raw: body,
     });
   } catch (err) {
     if (err.code === 11000) {
-      await User.updateOne({ _id: user._id }, incPipeline(-credit));
+      await User.updateOne({ _id: user._id }, incWalletBalance(walletType, -credit));
       const fresh = await User.findById(user._id).lean();
       return {
-        ...result(CODES.SUCCESS, 'Success', { balance: round2(fresh.balance), currency: cur, date: now() }),
+        ...result(CODES.SUCCESS, 'Success', { balance: balanceOf(fresh, walletType), currency: cur, date: now() }),
         _isDuplicate: true,
       };
     }
@@ -469,7 +500,7 @@ const winBet = async ({ body }) => {
   }
 
   return result(CODES.SUCCESS, 'Success', {
-    balance: round2(credited.balance),
+    balance: balanceOf(credited, walletType),
     currency: cur,
     reference_id: referenceId,
     date: now(),
@@ -496,9 +527,13 @@ const rollbackBet = async ({ body }) => {
   const { user, placeTxn } = playerContext;
   if (!user) return result(CODES.UNAUTHORISED, 'Unauthorised access');
 
+  const operatorReferenceId = resolveOperatorReferenceId(body);
+  const walletType = await resolveBetWallet(
+    { betId: bet_id, providerTransactionId, operatorReferenceId },
+    placeTxn
+  );
   const canonicalBetId = placeTxn?.betId || bet_id;
   const cur = currency || config.eurovirtuals.currency;
-  const operatorReferenceId = resolveOperatorReferenceId(body);
 
   const dup = await existingByAction(
     {
@@ -511,7 +546,7 @@ const rollbackBet = async ({ body }) => {
   if (dup) {
     const fresh = await User.findById(user._id).lean();
     return {
-      ...result(CODES.SUCCESS, 'Success', { balance: round2(fresh.balance), currency: cur, reference_id: dup.referenceId, date: now() }),
+      ...result(CODES.SUCCESS, 'Success', { balance: balanceOf(fresh, walletType), currency: cur, reference_id: dup.referenceId, date: now() }),
       _isDuplicate: true,
     };
   }
@@ -523,36 +558,37 @@ const rollbackBet = async ({ body }) => {
   const referenceId = crypto.randomUUID();
   const updated = await User.findByIdAndUpdate(
     user._id,
-    incPipeline(reverseDelta),
+    incWalletBalance(walletType, reverseDelta),
     { new: true }
   ).lean();
 
-  if (updated.balance < 0) logger.warn('EV rollback drove balance negative', bet_id, updated.balance);
+  if (updated[walletBalanceField(walletType)] < 0) logger.warn('EV rollback drove balance negative', bet_id, balanceOf(updated, walletType));
 
   try {
     await VirtualTxn.create({
       user: user._id,
+      walletType,
       betId: canonicalBetId,
       providerTransactionId,
       action: 'rollback_bet',
       currency: cur,
       delta: reverseDelta,
-      balanceAfter: round2(updated.balance),
+      balanceAfter: balanceOf(updated, walletType),
       referenceId,
       operatorReferenceId,
       raw: body,
     });
   } catch (err) {
     if (err.code === 11000) {
-      await User.updateOne({ _id: user._id }, incPipeline(-reverseDelta));
+      await User.updateOne({ _id: user._id }, incWalletBalance(walletType, -reverseDelta));
       const fresh = await User.findById(user._id).lean();
-      return { ...result(CODES.SUCCESS, 'Success', { balance: round2(fresh.balance), currency: cur, date: now() }), _isDuplicate: true };
+      return { ...result(CODES.SUCCESS, 'Success', { balance: balanceOf(fresh, walletType), currency: cur, date: now() }), _isDuplicate: true };
     }
     throw err;
   }
 
   return result(CODES.SUCCESS, 'Success', {
-    balance: round2(updated.balance),
+    balance: balanceOf(updated, walletType),
     currency: cur,
     reference_id: referenceId,
     date: now(),
