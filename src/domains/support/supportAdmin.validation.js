@@ -10,6 +10,8 @@ const agents = z.object({
 const sessions = z.object({
   status: z.enum(['waiting', 'active', 'closed']).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  // Part of a phone number, e.g. 0714073826 or 3826.
+  phone: z.string().trim().regex(/^\+?\d{3,15}$/, 'Enter at least 3 digits').optional(),
 });
 const agentParams = z.object({ userId: objectId });
 const agentBan = z.object({

@@ -71,8 +71,14 @@ const setAgentBan = async (actor, userId, { ban }) => {
   return user;
 };
 
-const listSessions = async ({ status, limit }) => {
-  const rows = await SupportSession.find(status ? { status } : {})
+const listSessions = async ({ status, limit, phone }) => {
+  const filter = status ? { status } : {};
+  if (phone) {
+    // 0714... and 254714... both find the same player.
+    const digits = String(phone).replace(/\D/g, '').replace(/^0/, '254');
+    filter['customer.phone'] = { $regex: digits };
+  }
+  const rows = await SupportSession.find(filter)
     .populate('assignedAgentId', 'name phone')
     .sort({ lastMessageAt: -1 })
     .limit(limit)

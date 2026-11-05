@@ -242,6 +242,8 @@ const attachSupportChat = (httpServer) => {
 
     socket.join('staff');
     socket.join(`staff:${userId}`);
+    // Admins can open every closed chat; support agents only the ones they handled.
+    const seesAllHistory = ['admin', 'super_admin'].includes(socket.data.staffLevel);
 
     onAsync(socket, 'agent:go_online', async () => {
       socket.data.agentStatus = 'online';
@@ -253,7 +255,7 @@ const attachSupportChat = (httpServer) => {
       const [waiting, assigned, history] = await Promise.all([
         supportStore.listWaiting(),
         supportStore.listAssigned(userId),
-        supportStore.listClosed(userId),
+        supportStore.listClosed(userId, 100, { all: seesAllHistory }),
       ]);
       socket.emit('agent:online_confirmed', {
         queue: waiting.map(supportStore.toPublicSession),
@@ -268,7 +270,7 @@ const attachSupportChat = (httpServer) => {
       const [waiting, assigned, history] = await Promise.all([
         supportStore.listWaiting(),
         supportStore.listAssigned(userId),
-        supportStore.listClosed(userId),
+        supportStore.listClosed(userId, 100, { all: seesAllHistory }),
       ]);
       socket.emit('agent:queue', { queue: waiting.map(supportStore.toPublicSession) });
       socket.emit('agent:active_chats', {
@@ -370,7 +372,7 @@ const attachSupportChat = (httpServer) => {
     });
 
     onAsync(socket, 'agent:view_history', async ({ sessionId } = {}) => {
-      const session = await supportStore.findClosedSession(sessionId, userId);
+      const session = await supportStore.findClosedSession(sessionId, userId, { all: seesAllHistory });
       if (!session) {
         socket.emit('agent:error', { message: 'Chat history is not available' });
         return;

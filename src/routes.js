@@ -9,6 +9,7 @@ const virtualRoutes = require('./domains/virtual/virtual.routes');
 const adminRoutes = require('./domains/admin/admin.routes');
 const walletRoutes = require('./domains/wallet/wallet.routes');
 const supportAdminRoutes = require('./domains/support/supportAdmin.routes');
+const supportCustomerRoutes = require('./domains/support/supportCustomer.routes');
 
 const router = Router();
 
@@ -23,6 +24,8 @@ router.use('/transactions', transactionRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/virtuals', virtualRoutes);
 router.use('/admin', adminRoutes);
+// Players' own chat history first, so it never goes through the staff-only routes below.
+router.use('/support-chat/me', supportCustomerRoutes);
 router.use('/support-chat', supportAdminRoutes);
 
 module.exports = router;

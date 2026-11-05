@@ -1,6 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('crypto');
+const mongoose = require('mongoose');
 const SupportSession = require('./supportSession.model');
 const notificationService = require('../notification/notification.service');
 
@@ -42,8 +43,9 @@ const listAssigned = (agentId) =>
     .sort({ lastMessageAt: -1 })
     .lean();
 
-const listClosed = (agentId, limit = 100) =>
-  SupportSession.find({ status: 'closed', assignedAgentId: agentId })
+// `all: true` (admins) lists every closed chat; otherwise only the ones this agent handled.
+const listClosed = (agentId, limit = 100, { all = false } = {}) =>
+  SupportSession.find(all ? { status: 'closed' } : { status: 'closed', assignedAgentId: agentId })
     .sort({ closedAt: -1, updatedAt: -1 })
     .limit(Math.min(Math.max(Number(limit) || 100, 1), 100))
     .lean();
@@ -161,8 +163,48 @@ const claimSession = (sessionId, agentId) =>
 const findAssignedSession = (sessionId, agentId) =>
   SupportSession.findOne({ sessionId, status: 'active', assignedAgentId: agentId }).lean();
 
-const findClosedSession = (sessionId, agentId) =>
-  SupportSession.findOne({ sessionId, status: 'closed', assignedAgentId: agentId }).lean();
+const findClosedSession = (sessionId, agentId, { all = false } = {}) =>
+  SupportSession.findOne(
+    all ? { sessionId, status: 'closed' } : { sessionId, status: 'closed', assignedAgentId: agentId }
+  ).lean();
+
+// ---- a customer's own chat history ---------------------------------------------
+// Always scoped by customerId: a player can only ever see their own conversations.
+const listForCustomer = async (customerId, limit = 30) => {
+  const rows = await SupportSession.aggregate([
+    { $match: { customerId: new mongoose.Types.ObjectId(String(customerId)) } },
+    { $sort: { lastMessageAt: -1 } },
+    { $limit: Math.min(Math.max(Number(limit) || 30, 1), 100) },
+    {
+      $project: {
+        _id: 0,
+        sessionId: 1,
+        status: 1,
+        topic: 1,
+        createdAt: 1,
+        closedAt: 1,
+        lastMessageAt: 1,
+        messageCount: { $size: { $ifNull: ['$messages', []] } },
+        lastMessage: { $arrayElemAt: ['$messages', -1] },
+      },
+    },
+  ]);
+  return rows.map((row) => ({
+    ...row,
+    lastMessage: row.lastMessage
+      ? {
+          senderType: row.lastMessage.senderType,
+          content: String(row.lastMessage.content || '').slice(0, 140),
+          createdAt: row.lastMessage.createdAt,
+        }
+      : null,
+  }));
+};
+
+const getForCustomer = async (customerId, sessionId) => {
+  const session = await SupportSession.findOne({ sessionId, customerId }).lean();
+  return session ? serializeSession(session) : null;
+};
 
 const closeSession = (sessionId, agentId) =>
   SupportSession.findOneAndUpdate(
@@ -213,9 +255,11 @@ module.exports = {
   findAssignedSession,
   findClosedSession,
   getStats,
+  getForCustomer,
   getOrCreateCustomerSession,
   listAssigned,
   listClosed,
+  listForCustomer,
   listWaiting,
   markCustomerMessagesRead,
   transferSession,
