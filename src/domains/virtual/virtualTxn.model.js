@@ -15,6 +15,8 @@ const virtualTxnSchema = new mongoose.Schema(
     type: { type: String, default: null },
     gameUuid: { type: String, default: null },
     gameName: { type: String, default: null },
+    // Which wallet the money moved in. Wins and refunds always go back to the wallet of the bet.
+    walletType: { type: String, enum: ['balance', 'airtime'], default: 'balance' },
     currency: { type: String, required: true },
     amount: { type: Number, default: 0 },
     payout: { type: Number, default: 0 },
