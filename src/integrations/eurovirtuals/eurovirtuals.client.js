@@ -49,7 +49,10 @@ const listGames = ({ page, perPage, status, gameUuid } = {}) => {
   return send('GET', `/v1/games${qs ? `?${qs}` : ''}`, { sign });
 };
 
-const launchGame = ({ playerId, playerName, playerToken, gameUuid, currency, demo }) => {
+// `balance` is the player's opening balance. Some games show it until they next ask us for the
+// balance, so leaving it out makes them open at 0.00 even when the wallet has money.
+const launchGame = ({ playerId, playerName, playerToken, gameUuid, currency, balance, demo }) => {
+  const openingBalance = Number(balance);
   const body = demo
     ? { game_uuid: gameUuid, currency, demo: 1, return_url: returnUrl }
     : {
@@ -58,6 +61,9 @@ const launchGame = ({ playerId, playerName, playerToken, gameUuid, currency, dem
         player_token: playerToken,
         game_uuid: gameUuid,
         currency,
+        ...(balance !== undefined && balance !== null && Number.isFinite(openingBalance)
+          ? { balance: openingBalance }
+          : {}),
         demo: 0,
         return_url: returnUrl,
       };

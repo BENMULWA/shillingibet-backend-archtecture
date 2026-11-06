@@ -5,6 +5,7 @@ const service = require('./virtual.service');
 const client = require('../../integrations/eurovirtuals/eurovirtuals.client');
 const config = require('../../config');
 const User = require('../user/user.model');
+const { normalizeWalletType, walletBalanceField } = require('../../utils/db');
 
 const pickPresentKeys = (body = {}, keys = []) =>
   keys.filter((key) => body[key] !== undefined && body[key] !== null && body[key] !== '');
@@ -137,12 +138,17 @@ const launch = async (req, res) => {
     const isDemo = demo ? 1 : 0;
     const playerToken = isDemo ? null : await service.issueSession(user._id, user.activeWallet);
 
+    // Tell the game the opening balance of the wallet it will play with (main or airtime).
+    const walletType = normalizeWalletType(user.activeWallet);
+    const openingBalance = Math.round((Number(user[walletBalanceField(walletType)]) || 0) * 100) / 100;
+
     const r = await client.launchGame({
       playerId: user._id,
       playerName: user.name || user.phone,
       playerToken,
       gameUuid: game_uuid,
       currency: config.eurovirtuals.currency,
+      balance: openingBalance,
       demo: isDemo,
     });
     return relay(res, r);
