@@ -5,6 +5,8 @@ const Bet = require('../bet/bet.model');
 const Transaction = require('../transaction/transaction.model');
 const VirtualTxn = require('../virtual/virtualTxn.model');
 const virtualService = require('../virtual/virtual.service');
+const CashbackAward = require('../cashback/cashbackAward.model');
+const ReferralAward = require('../user/referralAward.model');
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -76,18 +78,100 @@ const getOverview = async ({ dateFrom, dateTo }) => {
       ]).then((rows) => round2(rows[0]?.total || 0)),
     ]);
 
+  // Virtual games are where almost all play happens; count them with the sportsbook.
+  const virtualMatch = { currency: 'KES' };
+  if (createdRange) virtualMatch.createdAt = createdRange;
+  const anyDeposit = { type: 'deposit' };
+  if (createdRange) anyDeposit.createdAt = createdRange;
+  const failedDepositMatch = { ...anyDeposit, status: { $in: ['failed', 'expired'] } };
+  const stuckSince = new Date(Date.now() - 30 * 60 * 1000);
+
+  const [virtualRows, sportsbookRefunds, virtualBettors, sportsbookBettors, sportsbookBetCount, depositCount, withdrawalCount,
+    failedDeposits, firstTimeDepositors, cashbackTotal, walletRows, pendingRows, manualReview, heldReferralAwards] = await Promise.all([
+    VirtualTxn.aggregate([
+      { $match: virtualMatch },
+      {
+        $group: {
+          _id: null,
+          bets: { $sum: { $cond: [{ $eq: ['$action', 'place_bet'] }, 1, 0] } },
+          stakes: { $sum: { $cond: [{ $eq: ['$action', 'place_bet'] }, '$amount', 0] } },
+          payouts: { $sum: { $cond: [{ $in: ['$action', ['result_bet', 'result_freebet']] }, '$payout', 0] } },
+        },
+      },
+    ]),
+    sumField(Bet, { status: 'void', ...(settledRange ? { settledAt: settledRange } : {}) }, 'stake'),
+    VirtualTxn.distinct('user', { ...virtualMatch, action: 'place_bet' }),
+    Bet.distinct('user', betCreatedMatch),
+    countDocs(Bet, betCreatedMatch),
+    countDocs(Transaction, depositMatch),
+    countDocs(Transaction, withdrawalMatch),
+    countDocs(Transaction, failedDepositMatch),
+    // Players whose very first completed deposit falls in this period.
+    Transaction.aggregate([
+      { $match: { type: 'deposit', status: 'completed' } },
+      { $group: { _id: '$user', first: { $min: '$completedAt' } } },
+      ...(completedRange ? [{ $match: { first: completedRange } }] : []),
+      { $count: 'n' },
+    ]).then((rows) => rows[0]?.n || 0),
+    sumField(CashbackAward, completedRange ? { creditedAt: completedRange } : {}, 'amount'),
+    User.aggregate([
+      { $match: { role: 'user', deletedAt: null } },
+      {
+        $group: {
+          _id: null,
+          bonus: { $sum: '$bonusBalance' },
+          withdrawable: { $sum: { $max: [{ $subtract: [{ $ifNull: ['$balance', 0] }, { $ifNull: ['$bonusBalance', 0] }] }, 0] } },
+        },
+      },
+    ]),
+    // "Needs attention" right now, not limited to the period.
+    Transaction.aggregate([
+      { $match: { type: 'withdrawal', status: 'pending' } },
+      { $group: { _id: null, n: { $sum: 1 }, amount: { $sum: { $ifNull: ['$netAmount', '$amount'] } } } },
+    ]),
+    countDocs(Transaction, { type: 'withdrawal', status: 'pending', createdAt: { $lt: stuckSince } }),
+    countDocs(ReferralAward, { status: 'held' }),
+  ]);
+
+  const v = virtualRows[0] || {};
+  const betAmount = round2(totalBetAmount + (v.stakes || 0));
+  const winAmount = round2(totalWinAmount + (v.payouts || 0));
+  // GGR = stakes − winnings − refunded stakes (virtual rollbacks and void sportsbook bets).
+  const ggr = round2(betAmount - winAmount - totalRollbackAmount - sportsbookRefunds);
+  const activeBettors = new Set([...virtualBettors, ...sportsbookBettors].map(String)).size;
+  const wallets = walletRows[0] || {};
+
   return {
     range: {
       dateFrom: dateFrom ? dateFrom.toISOString() : null,
       dateTo: dateTo ? dateTo.toISOString() : null,
     },
+    attention: {
+      pendingWithdrawals: pendingRows[0]?.n || 0,
+      pendingWithdrawalAmount: round2(pendingRows[0]?.amount),
+      // Withdrawals still unconfirmed by the provider after 30 minutes.
+      manualReview,
+      heldReferralAwards,
+    },
     cards: {
       registeredUsers,
       referredUsers,
-      totalRevenue: lostStakeTotal,
-      betAmount: totalBetAmount,
-      winAmount: totalWinAmount,
-      profit: round2(lostStakeTotal - totalWinAmount),
+      totalRevenue: ggr,
+      betAmount,
+      winAmount,
+      profit: ggr,
+      virtualStakes: round2(v.stakes),
+      virtualPayouts: round2(v.payouts),
+      sportsbookStakes: totalBetAmount,
+      sportsbookRevenue: round2(lostStakeTotal - totalWinAmount),
+      betCount: sportsbookBetCount + (v.bets || 0),
+      activeBettors,
+      depositCount,
+      withdrawalCount,
+      failedDeposits,
+      firstTimeDepositors,
+      playersBonusBalance: round2(wallets.bonus),
+      playersWithdrawableBalance: round2(wallets.withdrawable),
       deposits: totalDeposits,
       withdrawals: totalWithdrawals,
       tax: withdrawalTax,
@@ -97,7 +181,7 @@ const getOverview = async ({ dateFrom, dateTo }) => {
       withdrawalsPaidOut,
       withdrawalCharges: round2(withdrawalTax + withdrawalFees),
       referralBonus: totalReferralBonus,
-      cashback: 0,
+      cashback: cashbackTotal,
       rollbackAmount: totalRollbackAmount,
       playersBalance,
     },
@@ -123,7 +207,7 @@ const getMonthlyAnalytics = async ({ months }) => {
   const firstMonth = new Date(firstCalendarMonth.getTime() - 3 * 60 * 60 * 1000);
   const dateFilter = { $gte: firstMonth };
 
-  const [betRows, settlementRows, transactionRows] = await Promise.all([
+  const [betRows, settlementRows, transactionRows, virtualRows] = await Promise.all([
     Bet.aggregate([
       { $match: { createdAt: dateFilter } },
       {
@@ -175,6 +259,20 @@ const getMonthlyAnalytics = async ({ months }) => {
         },
       },
     ]),
+    VirtualTxn.aggregate([
+      { $match: { currency: 'KES', createdAt: dateFilter } },
+      {
+        $group: {
+          _id: {
+            year: { $year: { date: '$createdAt', timezone: 'Africa/Nairobi' } },
+            month: { $month: { date: '$createdAt', timezone: 'Africa/Nairobi' } },
+          },
+          stakes: { $sum: { $cond: [{ $eq: ['$action', 'place_bet'] }, '$amount', 0] } },
+          payouts: { $sum: { $cond: [{ $in: ['$action', ['result_bet', 'result_freebet']] }, '$payout', 0] } },
+          refunds: { $sum: { $cond: [{ $eq: ['$action', 'rollback_bet'] }, '$delta', 0] } },
+        },
+      },
+    ]),
   ]);
 
   const byMonth = new Map();
@@ -197,7 +295,8 @@ const getMonthlyAnalytics = async ({ months }) => {
       revenue: 0,
       winAmount: 0,
     };
-    value.revenue = round2(row.revenue);
+    // Sportsbook GGR: lost stakes minus winnings paid.
+    value.revenue = round2(row.revenue - row.winAmount);
     value.winAmount = round2(row.winAmount);
     byMonth.set(key, value);
   }
@@ -212,6 +311,17 @@ const getMonthlyAnalytics = async ({ months }) => {
     };
     value.deposits = round2(row.deposits);
     value.withdrawals = round2(row.withdrawals);
+    byMonth.set(key, value);
+  }
+
+  // Virtual games: add stakes and payouts; revenue becomes total GGR for the month.
+  for (const row of virtualRows) {
+    const key = `${row._id.year}-${row._id.month}`;
+    const value = byMonth.get(key) || { year: row._id.year, month: row._id.month, betAmount: 0, revenue: 0, winAmount: 0 };
+    value.betAmount = round2((value.betAmount || 0) + row.stakes);
+    value.winAmount = round2((value.winAmount || 0) + row.payouts);
+    value.virtualRevenue = round2(row.stakes - row.payouts - row.refunds);
+    value.revenue = round2((value.revenue || 0) + value.virtualRevenue);
     byMonth.set(key, value);
   }
 

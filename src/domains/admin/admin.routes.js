@@ -27,6 +27,7 @@ router.get('/analytics/activity', can('dashboard.view'), validate({ query: schem
 // Money
 router.get('/transactions', can('transactions.view'), validate({ query: schemas.transactions }), controller.transactions);
 router.get('/treasury/withdrawals', can('treasury.view'), controller.getPayoutFloat);
+router.get('/treasury/withdrawals/movements', can('treasury.view'), controller.listTreasuryMovements);
 
 // Finance report: revenue, withdrawal tax (owed to KRA) and fees, per Nairobi day.
 // Polled under /analytics so the audit log isn't flooded; the CSV export is audited.

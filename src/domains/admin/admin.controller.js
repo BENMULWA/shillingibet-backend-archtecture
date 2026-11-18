@@ -43,11 +43,39 @@ const getPayoutFloat = asyncHandler(async (_req, res) => {
 });
 
 const allocatePayoutFloat = asyncHandler(async (req, res) => {
+  const before = await payoutFloatService.getPayoutFloat();
   const data = await payoutFloatService.allocatePayoutFloat({
     ...req.body,
     actorId: req.user._id,
   });
+  // Real Mamlaka payout balance right now (best effort, max 5 s), kept with the
+  // allocation so it can be reconciled against the top-up on the statement.
+  const live = await Promise.race([
+    require('./providerBalance.service').readLiveBalances().catch(() => null),
+    new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+  ]);
+  res.locals.audit = {
+    action: 'payout_float_allocation',
+    reason: req.body.note || null,
+    changes: {
+      amount: Number(req.body.amount),
+      before: before.balance,
+      after: data.balance,
+      mamlakaPayoutKes: live?.payoutKes ?? null,
+    },
+  };
   sendSuccess(res, { message: 'Payout float allocated', data });
+});
+
+const listTreasuryMovements = asyncHandler(async (req, res) => {
+  const [movements, live] = await Promise.all([
+    require('./payoutFloatHistory.service').listMovements({ limit: req.query.limit }),
+    Promise.race([
+      require('./providerBalance.service').readLiveBalances().catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]),
+  ]);
+  sendSuccess(res, { data: { movements, mamlakaPayoutKes: live?.payoutKes ?? null } });
 });
 
 const reconcileVirtualBet = asyncHandler(async (req, res) => {
@@ -362,5 +390,6 @@ module.exports = {
   transactions,
   getPayoutFloat,
   allocatePayoutFloat,
+  listTreasuryMovements,
   reconcileVirtualBet,
 };
