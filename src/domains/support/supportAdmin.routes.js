@@ -1,7 +1,7 @@
 'use strict';
 
 const { Router } = require('express');
-const { authenticate, authorizeStaff } = require('../../middlewares/auth');
+const { authenticate, requirePermission } = require('../../middlewares/auth');
 const adminAudit = require('../../middlewares/adminAudit');
 const validate = require('../../middlewares/validate');
 const controller = require('./supportAdmin.controller');
@@ -12,11 +12,11 @@ router.use(authenticate, adminAudit);
 
 router.get(
   '/agent/online-agents',
-  authorizeStaff('support', 'admin', 'super_admin'),
+  requirePermission('chat.agent', 'chat.supervise'),
   controller.listOnlineAgents
 );
 
-router.use(authorizeStaff('super_admin'));
+router.use(requirePermission('chat.supervise'));
 
 router.get('/superadmin/agents', validate({ query: schemas.agents }), controller.listAgents);
 router.patch(

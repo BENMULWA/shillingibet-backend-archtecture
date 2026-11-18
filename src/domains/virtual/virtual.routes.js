@@ -3,7 +3,7 @@
 const { Router } = require('express');
 const controller = require('./virtual.controller');
 const verifyEurovirtuals = require('../../middlewares/verifyEurovirtuals');
-const { authenticate, authorizeStaff } = require('../../middlewares/auth');
+const { authenticate, requirePermission } = require('../../middlewares/auth');
 const { launchLimiter } = require('../../middlewares/rateLimiter');
 
 const router = Router();
@@ -16,6 +16,6 @@ router.post('/rollback', verifyEurovirtuals, controller.rollback);
 router.get('/games', controller.getGames);
 router.post('/launch', authenticate, launchLimiter, controller.launch);
 router.get('/bet/status/:game_uuid', authenticate, controller.getBetStatus);
-router.post('/shortcode/:game_uuid', authenticate, authorizeStaff('admin', 'super_admin'), controller.shortcode);
+router.post('/shortcode/:game_uuid', authenticate, requirePermission('events.manage'), controller.shortcode);
 
 module.exports = router;

@@ -11,6 +11,7 @@ const loadService = ({ existingUser, updatedUser }) => {
   const state = {
     findByIdCalls: [],
     findByIdAndUpdateCalls: [],
+    adjustments: [],
   };
 
   Module._load = function mockLoad(request, parent, isMain) {
@@ -38,6 +39,10 @@ const loadService = ({ existingUser, updatedUser }) => {
       };
     }
 
+    if (request === '../admin/balanceAdjustment.model' && parent?.filename === servicePath) {
+      return { create: async (doc) => { state.adjustments.push(doc); return doc; } };
+    }
+
     if (request === '../../utils/db' && parent?.filename === servicePath) {
       return {
         incWalletBalance(walletType, amount) {
@@ -62,7 +67,8 @@ const loadService = ({ existingUser, updatedUser }) => {
       request === '../../utils/phone' ||
       request === '../../services/sms.service' ||
       request === '../../middlewares/auth' ||
-      request === './referral'
+      request === './referral' ||
+      request === '../admin/staffRole.service'
     ) {
       return {};
     }
@@ -78,15 +84,23 @@ const loadService = ({ existingUser, updatedUser }) => {
   }
 };
 
+const STAFF = { _id: '507f1f77bcf86cd799439099' };
+
 test('manual credit uses the target user activeWallet when walletType is omitted', async () => {
   const { service, state } = loadService({
     existingUser: { _id: '507f1f77bcf86cd799439011', activeWallet: 'airtime' },
-    updatedUser: { _id: '507f1f77bcf86cd799439011', airtimeBalance: 250 },
+    updatedUser: { _id: '507f1f77bcf86cd799439011', airtimeBalance: 0 },
   });
 
-  const user = await service.deposit('507f1f77bcf86cd799439011', 250);
+  const user = await service.deposit('507f1f77bcf86cd799439011', 250, undefined, { actor: STAFF });
 
   assert.equal(user.airtimeBalance, 250);
+  assert.equal(state.adjustments.length, 1);
+  assert.equal(state.adjustments[0].type, 'admin_credit');
+  assert.equal(state.adjustments[0].amount, 250);
+  assert.equal(state.adjustments[0].balanceBefore, 0);
+  assert.equal(state.adjustments[0].balanceAfter, 250);
+  assert.equal(state.adjustments[0].actor, STAFF._id);
   assert.deepEqual(state.findByIdAndUpdateCalls[0].update, [
     { $set: { airtimeBalance: { $round: [{ $add: ['$airtimeBalance', 250] }, 2] } } },
   ]);
@@ -98,9 +112,19 @@ test('manual credit accepts airtimeBalance as a walletType alias', async () => {
     updatedUser: { _id: '507f1f77bcf86cd799439011', airtimeBalance: 100 },
   });
 
-  await service.deposit('507f1f77bcf86cd799439011', 100, 'airtimeBalance');
+  await service.deposit('507f1f77bcf86cd799439011', 100, 'airtimeBalance', { actor: STAFF });
 
   assert.deepEqual(state.findByIdAndUpdateCalls[0].update, [
     { $set: { airtimeBalance: { $round: [{ $add: ['$airtimeBalance', 100] }, 2] } } },
   ]);
+});
+
+test('manual credit refuses to run without a staff member to record', async () => {
+  const { service, state } = loadService({
+    existingUser: { _id: '507f1f77bcf86cd799439011', activeWallet: 'balance' },
+    updatedUser: { _id: '507f1f77bcf86cd799439011', balance: 0 },
+  });
+
+  await assert.rejects(service.deposit('507f1f77bcf86cd799439011', 100), /staff member/);
+  assert.equal(state.findByIdAndUpdateCalls.length, 0);
 });

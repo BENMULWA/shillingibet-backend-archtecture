@@ -41,6 +41,7 @@ const loadService = ({ transferResponse }) => {
       findOneAndUpdate: () => lean({ _id: 'user-1' }),
       updateOne: async (query, update) => { state.userUpdates.push({ query, update }); return { matchedCount: 1 }; },
     }),
+    '../admin/balanceIntegrity.service': () => ({ assertBalanceBacked: async () => {} }),
     '../admin/payoutFloat.service': () => ({
       requirePayoutCapacity: async () => {},
       settlePayout: async (ref, opts) => { state.floatSettled.push({ ref, ...opts }); },

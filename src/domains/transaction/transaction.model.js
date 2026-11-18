@@ -13,6 +13,12 @@ const transactionSchema = new mongoose.Schema(
       index: true,
     },
     amount: { type: Number, required: true, min: 0 },
+    // Cash withdrawals: `amount` is debited from the wallet, `netAmount` is paid out,
+    // `taxAmount` + `feeAmount` are kept by the platform. Null on deposits and airtime.
+    taxRate: { type: Number, default: null },
+    taxAmount: { type: Number, default: null, min: 0 },
+    feeAmount: { type: Number, default: null, min: 0 },
+    netAmount: { type: Number, default: null, min: 0 },
     currency: { type: String, required: true, default: 'KES' },
     walletType: { type: String, enum: ['balance', 'airtime'], default: 'balance', index: true },
     provider: { type: String, required: true },

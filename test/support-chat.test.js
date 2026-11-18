@@ -62,6 +62,9 @@ const startServer = async () => {
       if (request === '../domains/user/user.model') return { findById: (id) => ({ lean: async () => users[id] || null }) };
       if (request === '../domains/support/supportSession.store') return store;
       if (request === '../domains/support/supportAdmin.service') return {};
+      if (request === '../domains/admin/staffRole.service') {
+        return { permissionsFor: async (level) => (level ? ['chat.agent'] : []) };
+      }
       if (request === '../middlewares/auth') {
         return { isStaffUser: (u) => Boolean(u.isStaff), getStaffLevel: (u) => u.adminLevel };
       }

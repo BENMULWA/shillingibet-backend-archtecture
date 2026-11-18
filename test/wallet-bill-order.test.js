@@ -117,6 +117,15 @@ const loadService = ({ providerResponse, providerError, transaction = null } = {
       };
     }
 
+    if (request === '../admin/balanceIntegrity.service' && parent?.filename === servicePath) {
+      return {
+        async assertBalanceBacked(user) {
+          state.integrityChecks = (state.integrityChecks || 0) + 1;
+          if (state.unbackedBalance) throw Object.assign(new Error('Withdrawals are on hold'), { statusCode: 403 });
+          return user;
+        },
+      };
+    }
     if (request === '../admin/payoutFloat.service' && parent?.filename === servicePath) {
       return {
         requirePayoutCapacity: async (payload) => {
@@ -492,7 +501,12 @@ test('withdrawComet reserves the main balance and submits a credit order', async
 
   assert.equal(result.status, 'completed');
   assert.equal(state.creditPayload.direction, 'credit');
-  assert.equal(state.creditPayload.amount, 10);
+  // Comet is sent the net amount; the wallet is still debited the full 10.
+  assert.equal(state.creditPayload.amount, 9.5);
+  assert.equal(state.createdTransactions[0].amount, 10);
+  assert.equal(state.createdTransactions[0].taxAmount, 0.5);
+  assert.equal(state.createdTransactions[0].feeAmount, 0);
+  assert.equal(state.createdTransactions[0].netAmount, 9.5);
   assert.equal(state.creditPayload.currency, 'KES');
   assert.match(state.creditPayload.external_ref, /^COMET-KES-WDR-/);
   assert.equal(state.creditPayload.email, 'player@example.com');
@@ -500,7 +514,7 @@ test('withdrawComet reserves the main balance and submits a credit order', async
   assert.equal(state.createdTransactions[0].type, 'withdrawal');
   assert.equal(state.createdTransactions[0].secureId, '77');
   assert.equal(state.floatRequired.length, 1);
-  assert.equal(state.floatRequired[0].amount, 10);
+  assert.equal(state.floatRequired[0].amount, 9.5);
   assert.equal(state.floatRequired[0].user.name, undefined);
   assert.equal(state.floatSettlements[0].options, undefined);
   assert.equal(state.walletUpdates[0].query.balance.$gte, 10);
@@ -584,7 +598,7 @@ test('withdrawComet blocks KES payouts before debiting the player when float is 
   assert.deepEqual(state.floatAlert, {
     phone: '0714073826',
     userName: 'Player One',
-    amount: 10,
+    amount: 9.5,
   });
 });
 

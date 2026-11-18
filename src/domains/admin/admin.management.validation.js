@@ -85,6 +85,27 @@ const userControls = z
     message: 'At least one account control is required',
   });
 
+// Staff roles are editable, so any well-formed role key passes validation;
+// the service then checks the role exists.
+const roleKey = z.string().trim().regex(/^[a-z][a-z0-9_]{1,39}$/, 'Invalid role');
+const permissionList = z.array(z.string().trim().max(60)).max(100);
+
+const createRole = z.object({
+  name: z.string().trim().min(2).max(60),
+  description: z.string().trim().max(200).optional(),
+  permissions: permissionList.default([]),
+}).strict();
+
+const updateRole = z.object({
+  name: z.string().trim().min(2).max(60).optional(),
+  description: z.string().trim().max(200).optional(),
+  permissions: permissionList.optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+  message: 'At least one role change is required',
+});
+
+const roleParams = z.object({ key: roleKey });
+
 const createStaff = z.object({
   phone: z
     .string()
@@ -93,20 +114,20 @@ const createStaff = z.object({
   password: z.string().min(8).max(128),
   name: z.string().trim().min(2).max(80).optional(),
   email: z.string().trim().email().optional(),
-  adminLevel: z.enum(['support', 'admin', 'super_admin']),
+  adminLevel: roleKey,
 });
 
 const listStaff = z.object({
   ...pagination,
   phone: phoneSearch,
   status: z.enum(['active', 'suspended']).optional(),
-  adminLevel: z.enum(['support', 'admin', 'super_admin']).optional(),
+  adminLevel: roleKey.optional(),
 });
 const staffParams = z.object({ id: objectId });
 
 const manageStaff = z.object({
   status: z.enum(['active', 'suspended']).optional(),
-  adminLevel: z.enum(['support', 'admin', 'super_admin']).optional(),
+  adminLevel: roleKey.optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, {
   message: 'At least one staff change is required',
 });
@@ -272,6 +293,9 @@ module.exports = {
   listTransactions,
   listBets,
   userControls,
+  createRole,
+  updateRole,
+  roleParams,
   createStaff,
   listStaff,
   staffParams,

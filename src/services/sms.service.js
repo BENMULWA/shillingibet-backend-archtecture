@@ -12,7 +12,15 @@ const compactAmount = (amount) =>
 
 const send = async ({ phone, message, context }) => {
   const result = await smsClient.sendSms({ phone, message });
-  logger.info('SMS sent', context || 'general', phone);
+  // Keep the gateway's message id so delivery can be traced with Celcom's getdlr endpoint.
+  const first = Array.isArray(result?.responses) ? result.responses[0] || {} : {};
+  logger.info(
+    'SMS sent',
+    context || 'general',
+    phone,
+    `messageId=${first.messageid ?? first.messageId ?? 'n/a'}`,
+    `gateway=${first['response-description'] ?? first.responseDescription ?? result?.response ?? 'n/a'}`
+  );
   return result;
 };
 

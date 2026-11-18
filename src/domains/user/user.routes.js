@@ -4,7 +4,8 @@ const { Router } = require('express');
 const controller = require('./user.controller');
 const schemas = require('./user.validation');
 const validate = require('../../middlewares/validate');
-const { authenticate, authorizeStaff } = require('../../middlewares/auth');
+const adminAudit = require('../../middlewares/adminAudit');
+const { authenticate, requirePermission, requireSuperAdmin } = require('../../middlewares/auth');
 const {
   authLimiter,
   staffLoginLimiter,
@@ -44,14 +45,16 @@ router.patch(
 router.patch(
   '/:id/staff-access',
   authenticate,
-  authorizeStaff('super_admin'),
+  requireSuperAdmin,
+  adminAudit,
   validate({ body: schemas.staffAccess }),
   controller.updateStaffAccess
 );
 router.post(
   '/credit',
   authenticate,
-  authorizeStaff('admin', 'super_admin'),
+  requirePermission('players.credit'),
+  adminAudit,
   validate({ body: schemas.credit }),
   controller.credit
 );

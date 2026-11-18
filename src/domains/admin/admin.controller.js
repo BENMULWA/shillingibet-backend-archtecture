@@ -13,6 +13,9 @@ const bonusFraudService = require('./admin.bonusFraud.service');
 const auditService = require('./admin.audit.service');
 const authEventService = require('./authEvent.service');
 const notificationService = require('../notification/notification.service');
+const staffRoles = require('./staffRole.service');
+const financeService = require('./finance.service');
+const balanceIntegrity = require('./balanceIntegrity.service');
 
 const overview = asyncHandler(async (req, res) => {
   const data = await service.getOverview(req.query);
@@ -86,15 +89,17 @@ const listBets = asyncHandler(async (req, res) => {
 });
 
 const createStaff = asyncHandler(async (req, res) => {
-  const user = await managementService.createStaff(req.body);
+  const { user, existingPlayer } = await managementService.createStaff(req.body);
   res.locals.audit = {
-    action: 'staff.create',
+    action: existingPlayer ? 'staff.add_to_player_account' : 'staff.create',
     targetUser: user._id,
-    changes: { phone: user.phone, adminLevel: user.adminLevel },
+    changes: { phone: user.phone, adminLevel: user.adminLevel, existingPlayer },
   };
   sendSuccess(res, {
     statusCode: 201,
-    message: 'Staff account created',
+    message: existingPlayer
+      ? 'Staff access added to this player account. They keep their current password; use Send reset SMS if they need a new one.'
+      : 'Staff account created',
     data: user,
   });
 });
@@ -116,6 +121,43 @@ const sendStaffPasswordReset = asyncHandler(async (req, res) => {
   sendSuccess(res, { message: 'Password reset code sent by SMS', data });
 });
 
+const balanceIntegrityReport = asyncHandler(async (_req, res) => {
+  sendSuccess(res, { data: await balanceIntegrity.scanAll() });
+});
+
+const financeReport = asyncHandler(async (req, res) => {
+  sendSuccess(res, { data: await financeService.getFinanceReport(req.query) });
+});
+
+const exportFinanceReport = asyncHandler(async (req, res) => {
+  const report = await financeService.getFinanceReport(req.query);
+  const from = report.days[0]?.date || 'report';
+  const to = report.days[report.days.length - 1]?.date || '';
+  await streamCsv(res, `finance-${from}${to && to !== from ? `-to-${to}` : ''}.csv`, financeService.CSV_HEADERS, financeService.financeCsvRows(report));
+});
+
+const listRoles = asyncHandler(async (_req, res) => {
+  sendSuccess(res, { data: await staffRoles.listRoles() });
+});
+
+const createRole = asyncHandler(async (req, res) => {
+  const role = await staffRoles.createRole(req.body);
+  res.locals.audit = { action: 'staff_role.create', changes: role };
+  sendSuccess(res, { statusCode: 201, message: 'Role created', data: role });
+});
+
+const updateRole = asyncHandler(async (req, res) => {
+  const { role, changes } = await staffRoles.updateRole(req.params.key, req.body);
+  res.locals.audit = { action: 'staff_role.update', changes: { key: role.key, ...changes } };
+  sendSuccess(res, { message: 'Role updated', data: role });
+});
+
+const deleteRole = asyncHandler(async (req, res) => {
+  const data = await staffRoles.deleteRole(req.params.key);
+  res.locals.audit = { action: 'staff_role.delete', changes: data };
+  sendSuccess(res, { message: 'Role deleted', data });
+});
+
 const exportUsers = asyncHandler(async (req, res) => {
   await streamCsv(
     res,
@@ -129,7 +171,7 @@ const exportTransactions = asyncHandler(async (req, res) => {
   await streamCsv(
     res,
     'transactions.csv',
-    ['Reference', 'Phone', 'Type', 'Status', 'Amount', 'Tax', 'Net amount', 'Currency', 'Provider', 'Created', 'Completed'],
+    ['Reference', 'External ID', 'Provider receipt', 'Provider secure ID', 'Phone', 'Type', 'Status', 'Wallet', 'Amount (wallet)', 'Tax', 'Fee', 'Amount moved by provider', 'Currency', 'Provider', 'Created', 'Completed'],
     managementService.exportTransactions(req.query)
   );
 });
@@ -257,6 +299,13 @@ module.exports = {
   listStaff,
   manageStaff,
   sendStaffPasswordReset,
+  listRoles,
+  financeReport,
+  balanceIntegrityReport,
+  exportFinanceReport,
+  createRole,
+  updateRole,
+  deleteRole,
   exportUsers,
   exportTransactions,
   exportBets,

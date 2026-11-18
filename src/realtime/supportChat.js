@@ -10,6 +10,7 @@ const supportStore = require('../domains/support/supportSession.store');
 const supportAdminService = require('../domains/support/supportAdmin.service');
 const supportPresence = require('../domains/support/supportPresence');
 const { getStaffLevel, isStaffUser } = require('../middlewares/auth');
+const staffRoles = require('../domains/admin/staffRole.service');
 
 const cleanToken = (value) => String(value || '').replace(/^Bearer\s+/i, '').trim();
 
@@ -36,6 +37,11 @@ const authenticateSocket = async (socket, next) => {
     socket.data.user = user;
     // Staff privileges only apply to tokens from the SMS-verified staff sign-in.
     socket.data.staffLevel = isStaffUser(user) && payload.mfa === true ? getStaffLevel(user) : null;
+    if (socket.data.staffLevel) {
+      socket.data.staffPermissions = await staffRoles.permissionsFor(socket.data.staffLevel);
+      const canChat = ['chat.agent', 'chat.supervise'].some((p) => socket.data.staffPermissions.includes(p));
+      if (!canChat) return next(new Error('Your role does not include live chat'));
+    }
     return next();
   } catch (error) {
     logger.warn(`Support chat authentication failed: ${error.message}`);
@@ -205,7 +211,8 @@ const attachSupportChat = (httpServer) => {
     socket.join('staff');
     socket.join(`staff:${userId}`);
     // Admins can open every closed chat; support agents only the ones they handled.
-    const seesAllHistory = ['admin', 'super_admin'].includes(socket.data.staffLevel);
+    const seesAllHistory = ['admin', 'super_admin'].includes(socket.data.staffLevel) ||
+      Boolean(socket.data.staffPermissions?.includes('chat.supervise'));
 
     onAsync(socket, 'agent:go_online', async () => {
       socket.data.agentStatus = 'online';
@@ -346,8 +353,8 @@ const attachSupportChat = (httpServer) => {
     });
 
     onAsync(socket, 'admin:view_chat', async ({ sessionId } = {}) => {
-      if (socket.data.staffLevel !== 'super_admin') {
-        socket.emit('agent:error', { message: 'Super admin access required' });
+      if (!socket.data.staffPermissions?.includes('chat.supervise')) {
+        socket.emit('agent:error', { message: 'Chat supervisor access required' });
         return;
       }
       const session = await supportAdminService.getSession(sessionId);

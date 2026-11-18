@@ -6,8 +6,14 @@ const validate = require('../../middlewares/validate');
 const { depositLimiter, withdrawalLimiter } = require('../../middlewares/rateLimiter');
 const controller = require('./wallet.controller');
 const schemas = require('./wallet.validation');
+const { withdrawalChargeRules } = require('../transaction/withdrawalCharges');
 
 const router = Router();
+
+// Withdrawal tax and fee rules, so the site shows the same deductions the backend applies.
+router.get('/charges', (_req, res) => {
+  res.json({ success: true, message: 'OK', data: withdrawalChargeRules() });
+});
 
 router.use(authenticate);
 
@@ -42,15 +48,5 @@ router.post(
   controller.celoWithdraw,
 );
 
-// Dev/staging-only: instantly credits the caller's own wallet for manual
-// testing, bypassing every real payment provider. The handler itself
-// refuses to run when NODE_ENV=production, so this route is inert there
-// even if it's accidentally deployed.
-router.post(
-  '/test-credit',
-  depositLimiter,
-  validate({ body: schemas.testCredit }),
-  controller.testCredit,
-);
 
 module.exports = router;

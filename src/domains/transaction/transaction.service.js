@@ -17,6 +17,8 @@ const Transaction = require('./transaction.model');
 const User = require('../user/user.model');
 const { qualifiesForReferralBonus } = require('../user/referral');
 const payoutFloatService = require('../admin/payoutFloat.service');
+const { computeWithdrawalCharges, payoutAmountOf, sameAmount } = require('./withdrawalCharges');
+const balanceIntegrity = require('../admin/balanceIntegrity.service');
 const notificationService = require('../notification/notification.service');
 const liquidityAlert = require('../admin/liquidityAlert.service');
 
@@ -113,11 +115,16 @@ const withdraw = async (user, { amount, phone, provider, walletType: requestedWa
   const externalId = makeRef(isAirtimeWithdrawal ? 'ART' : 'WDR');
   const currency = isAirtimeWithdrawal ? 'ARTM' : config.mamlaka.currency;
   const usesPayoutFloat = !isAirtimeWithdrawal && currency === 'KES';
+  // Tax and fees apply to cash withdrawals only; the provider pays out the net amount.
+  const charges = isAirtimeWithdrawal ? null : computeWithdrawalCharges(amount);
+  // Refuse to pay out money the wallet's history doesn't explain (e.g. a database edit).
+  await balanceIntegrity.assertBalanceBacked(user);
+  const payoutAmount = charges ? charges.netAmount : amount;
 
   if (usesPayoutFloat) {
     await payoutFloatService.requirePayoutCapacity({
       reference: externalId,
-      amount,
+      amount: payoutAmount,
       user,
     });
   }
@@ -150,6 +157,12 @@ const withdraw = async (user, { amount, phone, provider, walletType: requestedWa
       user: user._id,
       type: 'withdrawal',
       amount,
+      ...(charges ? {
+        taxRate: charges.taxRate,
+        taxAmount: charges.taxAmount,
+        feeAmount: charges.feeAmount,
+        netAmount: charges.netAmount,
+      } : {}),
       currency,
       walletType,
       provider: mobileMoneySP,
@@ -169,7 +182,7 @@ const withdraw = async (user, { amount, phone, provider, walletType: requestedWa
       : await mamlaka.initiateTransfer({
           impalaMerchantId: config.mamlaka.merchantId,
           currency: config.mamlaka.currency,
-          amount,
+          amount: payoutAmount,
           recipientPhone,
           mobileMoneySP,
           externalId,
@@ -273,8 +286,8 @@ const validateCallbackForTxn = (txn, type, payload, expectedType) => {
     return { ok: false, reason: 'secureId mismatch' };
   }
 
-  if (payload.amount != null && Number(payload.amount) !== txn.amount) {
-    logger.warn('Callback amount mismatch', payload.externalId, payload.amount, txn.amount);
+  if (payload.amount != null && !sameAmount(payload.amount, payoutAmountOf(txn))) {
+    logger.warn('Callback amount mismatch', payload.externalId, payload.amount, payoutAmountOf(txn));
     return { ok: false, reason: 'amount mismatch' };
   }
 
@@ -461,7 +474,8 @@ const notifyTransactionStatus = async (externalId, status) => {
   await smsService.sendTransactionStatus({
     phone: txn.phone,
     type: txn.type,
-    amount: txn.amount,
+    // A paid withdrawal reports what reached the player; a failed one, what was refunded.
+    amount: status === 'completed' ? payoutAmountOf(txn) : txn.amount,
     status,
     receipt: txn.receipt,
     failureReason: txn.failureReason,
@@ -578,7 +592,7 @@ const getById = async (userId, id) => {
           ...providerStatus,
           externalId: providerStatus.externalId || txn.externalId,
           secureId: providerStatus.secureId || txn.secureId,
-          amount: providerStatus.amount ?? txn.amount,
+          amount: providerStatus.amount ?? payoutAmountOf(txn),
         });
         txn = await Transaction.findOne({ _id: id, user: userId }).lean();
       }

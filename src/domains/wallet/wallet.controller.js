@@ -93,10 +93,6 @@ const celoWithdraw = asyncHandler(async (req, res) => {
   });
 });
 
-const testCredit = asyncHandler(async (req, res) => {
-  const result = await service.testCreditWallet(req.user, req.body);
-  sendSuccess(res, { message: 'Test credit applied', data: result });
-});
 
 const celoWebhook = asyncHandler(async (req, res) => {
   let payload;
@@ -110,4 +106,4 @@ const celoWebhook = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, ...result });
 });
 
-module.exports = { billOrder, cometWithdraw, cardLink, cometWebhook, celoDeposit, celoSync, celoWithdraw, celoWebhook, testCredit };
+module.exports = { billOrder, cometWithdraw, cardLink, cometWebhook, celoDeposit, celoSync, celoWithdraw, celoWebhook };

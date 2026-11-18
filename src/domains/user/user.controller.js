@@ -57,7 +57,11 @@ const updateStaffAccess = asyncHandler(async (req, res) => {
 });
 
 const credit = asyncHandler(async (req, res) => {
-  const user = await userService.deposit(req.body.userId, req.body.amount, req.body.walletType);
+  const user = await userService.deposit(req.body.userId, req.body.amount, req.body.walletType, {
+    actor: req.user,
+    reason: req.body.reason,
+  });
+  res.locals.audit = { action: 'player.manual_credit', targetUser: user._id, changes: { amount: req.body.amount, walletType: req.body.walletType || null }, reason: req.body.reason };
   sendSuccess(res, { message: 'Account credited', data: user });
 });
 

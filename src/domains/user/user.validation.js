@@ -61,13 +61,14 @@ const resetPassword = z.object({
 
 const staffAccess = z.object({
   isStaff: z.boolean(),
-  adminLevel: z.enum(['support', 'admin', 'super_admin']).nullable().optional(),
+  adminLevel: z.string().trim().regex(/^[a-z][a-z0-9_]{1,39}$/, 'Invalid role').nullable().optional(),
 });
 
 const credit = z.object({
   userId: z.string().regex(/^[a-f\d]{24}$/i, 'Invalid user id'),
   amount: z.coerce.number().positive().max(1_000_000),
   walletType: walletTypeValue.optional(),
+  reason: z.string().trim().min(3).max(500).optional(),
 });
 
 const activeWallet = z.object({

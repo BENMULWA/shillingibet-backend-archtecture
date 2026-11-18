@@ -16,6 +16,8 @@ const mamlakaCelo = require('../../integrations/mamlaka/celo.client');
 const Transaction = require('../transaction/transaction.model');
 const User = require('../user/user.model');
 const payoutFloatService = require('../admin/payoutFloat.service');
+const { computeWithdrawalCharges, payoutAmountOf, sameAmount } = require('../transaction/withdrawalCharges');
+const balanceIntegrity = require('../admin/balanceIntegrity.service');
 
 const makeCometRef = (type, currency, reference = '') => {
   const referenceSuffix = String(reference)
@@ -112,10 +114,14 @@ const withdrawComet = async (user, { amount, email, walletType: requestedWalletT
   const currency = walletType === 'airtime' ? 'ARTM' : config.comet.currency;
   const externalId = makeCometRef('WDR', currency);
   const usesPayoutFloat = walletType === 'balance' && currency === 'KES';
+  // Tax and fees apply to cash (KES) withdrawals only; Comet is sent the net amount.
+  const charges = usesPayoutFloat ? computeWithdrawalCharges(payoutAmount) : null;
+  await balanceIntegrity.assertBalanceBacked(user);
+  const sentAmount = charges ? charges.netAmount : payoutAmount;
   if (usesPayoutFloat) {
     await payoutFloatService.requirePayoutCapacity({
       reference: externalId,
-      amount: payoutAmount,
+      amount: sentAmount,
       user,
     });
   }
@@ -145,6 +151,12 @@ const withdrawComet = async (user, { amount, email, walletType: requestedWalletT
       user: user._id,
       type: 'withdrawal',
       amount: payoutAmount,
+      ...(charges ? {
+        taxRate: charges.taxRate,
+        taxAmount: charges.taxAmount,
+        feeAmount: charges.feeAmount,
+        netAmount: charges.netAmount,
+      } : {}),
       currency,
       walletType,
       provider: 'Comet',
@@ -176,7 +188,7 @@ const withdrawComet = async (user, { amount, email, walletType: requestedWalletT
   try {
     providerResponse = await comet.createCreditOrder({
       direction: 'credit',
-      amount: payoutAmount,
+      amount: sentAmount,
       currency,
       comment: `Bingwake wallet withdrawal ${externalId}`,
       email: payoutEmail,
@@ -327,52 +339,6 @@ const createCardPaymentLink = async (user, payload) => {
 const getCeloDepositInstructions = (user, asset = 'USDT') =>
   mamlakaCelo.getDepositInstructions(user._id, asset);
 
-// Dev/staging-only shortcut to fund a wallet for manual testing without
-// running a real payment through Mamlaka/TransactPay/the Celo gateway.
-// Hard-disabled whenever NODE_ENV=production so it can never be used to
-// mint free money on the live site — only local dev and this staging box
-// (which itself runs in development mode) can reach it.
-const testCreditWallet = async (user, { amount, walletType = 'balance' }) => {
-  if (config.isProd) {
-    throw ApiError.forbidden('Test credit is disabled in production');
-  }
-
-  const creditAmount = Number(Number(amount).toFixed(2));
-  const externalId = `TEST-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-
-  const updated = await User.findOneAndUpdate(
-    { _id: user._id },
-    incWalletBalance(walletType, creditAmount),
-    { new: true }
-  ).lean();
-  if (!updated) throw ApiError.notFound('User not found');
-
-  await Transaction.create({
-    user: user._id,
-    type: 'deposit',
-    status: 'completed',
-    amount: creditAmount,
-    currency: 'KES',
-    walletType: normalizeWalletType(walletType),
-    provider: 'test-credit',
-    phone: user.phone,
-    externalId,
-    receipt: externalId,
-    completedAt: new Date(),
-    walletAppliedAt: new Date(),
-  });
-
-  logger.info('Test credit applied', user._id, walletType, creditAmount);
-
-  return {
-    ok: true,
-    credited: creditAmount,
-    walletType: normalizeWalletType(walletType),
-    balance: updated.balance,
-    airtimeBalance: updated.airtimeBalance,
-  };
-};
-
 const withdrawCelo = async (user, payload) => {
   if (user.withdrawalPaused) throw ApiError.forbidden('Withdrawals are paused on this account');
   const asset = payload.asset || 'USDT';
@@ -387,6 +353,7 @@ const withdrawCelo = async (user, payload) => {
     throw new ApiError(503, `${asset} to KES withdrawal rate is not available`);
   }
   const debitAmountKes = Number((quote.to_amount ?? usdcAmount * rate).toFixed(2));
+  await balanceIntegrity.assertBalanceBacked(user);
   const externalId = makeCeloRef();
   await payoutFloatService.requirePayoutCapacity({
     reference: externalId,
@@ -507,8 +474,8 @@ const validateCallbackForTxn = (txn, payload) => {
     return { ok: false, reason: 'unknown transaction' };
   }
 
-  if (payload.amount != null && Number(payload.amount) !== Number(txn.amount)) {
-    logger.warn('Comet callback amount mismatch', payload.external_ref, payload.amount, txn.amount);
+  if (payload.amount != null && !sameAmount(payload.amount, payoutAmountOf(txn))) {
+    logger.warn('Comet callback amount mismatch', payload.external_ref, payload.amount, payoutAmountOf(txn));
     return { ok: false, reason: 'amount mismatch' };
   }
 
@@ -857,7 +824,6 @@ module.exports = {
   getCeloDepositInstructions,
   withdrawCelo,
   syncCeloDeposit,
-  testCreditWallet,
   handleCeloWebhook,
   handleCallback,
   callbackUrl,

@@ -6,6 +6,7 @@
 
 const ApiError = require('../../utils/ApiError');
 const { getStaffLevel, isStaffUser } = require('../../middlewares/auth');
+const staffRoles = require('./staffRole.service');
 const { normalizePhone } = require('../../utils/phone');
 const User = require('../user/user.model');
 const Bet = require('../bet/bet.model');
@@ -81,9 +82,24 @@ const listUsers = async ({ page, limit, phone, status }) => {
 };
 
 const createStaff = async ({ phone, password, name, email, adminLevel }) => {
+  await staffRoles.assertRoleExists(adminLevel);
   const normalizedPhone = normalizePhone(phone);
-  const exists = await User.exists({ phone: normalizedPhone });
-  if (exists) throw ApiError.conflict('Phone number already registered');
+  const existing = await User.findOne({ phone: normalizedPhone });
+  if (existing) {
+    if (existing.deletedAt) throw ApiError.conflict('This phone number belongs to a deleted account');
+    if (isStaffUser(existing)) throw ApiError.conflict('This phone number is already a staff account');
+
+    // The staff member already plays on this number. Add staff access to the same
+    // account so their wallet and history stay intact. Their password is NOT changed:
+    // otherwise adding someone as staff could take over a player's wallet. They sign in
+    // with their existing password, or use "Send reset SMS", which goes to their phone.
+    existing.isStaff = true;
+    existing.adminLevel = adminLevel;
+    if (!existing.name && name) existing.name = name;
+    if (!existing.email && email) existing.email = email;
+    await existing.save();
+    return { user: existing.toJSON(), existingPlayer: true };
+  }
 
   const user = await User.create({
     phone: normalizedPhone,
@@ -96,7 +112,7 @@ const createStaff = async ({ phone, password, name, email, adminLevel }) => {
     adminLevel,
   });
 
-  return user.toJSON();
+  return { user: user.toJSON(), existingPlayer: false };
 };
 
 const listStaff = async ({ page, limit, phone, status, adminLevel }) => {
@@ -126,6 +142,7 @@ const assertStaffTarget = async (actor, staffId) => {
 };
 
 const manageStaff = async (actor, staffId, changes) => {
+  if (changes.adminLevel) await staffRoles.assertRoleExists(changes.adminLevel);
   const staff = await assertStaffTarget(actor, staffId);
   const removesActiveSuperAdmin = staff.adminLevel === 'super_admin' && staff.status === 'active' && (
     changes.status === 'suspended' ||
@@ -196,14 +213,21 @@ async function* exportTransactions({ dateFrom, dateTo, phone, status }) {
 
   const cursor = Transaction.find(filter).sort({ createdAt: -1 }).lean().cursor();
   for await (const transaction of cursor) {
+    // One line per transaction, matched to the provider statement by receipt / externalId.
     yield [
       transaction.receipt || transaction.externalId,
+      transaction.externalId,
+      transaction.receipt,
+      transaction.secureId,
       transaction.phone,
       transaction.type,
       transaction.status,
+      transaction.walletType || 'balance',
       transaction.amount,
-      transaction.taxAmount,
-      transaction.netAmount,
+      transaction.taxAmount ?? 0,
+      transaction.feeAmount ?? 0,
+      // What the provider actually moved: net for withdrawals, the full amount for deposits.
+      transaction.type === 'withdrawal' ? transaction.netAmount ?? transaction.amount : transaction.amount,
       transaction.currency,
       transaction.provider,
       transaction.createdAt,

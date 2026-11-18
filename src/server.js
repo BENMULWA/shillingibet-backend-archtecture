@@ -12,6 +12,8 @@ let server;
 
 async function start() {
   await connectDatabase();
+  // Adds any missing built-in staff role; never overwrites roles edited on the dashboard.
+  await require('./domains/admin/staffRole.service').ensureDefaultRoles();
 
   server = http.createServer(app);
   attachSupportChat(server);
@@ -20,6 +22,8 @@ async function start() {
     logger.info(`Base URL: http://localhost:${config.port}${config.apiPrefix}`);
   });
   startLiquidityMonitor();
+  require('./domains/admin/providerBalance.service').startProviderBalanceRecorder();
+  require('./domains/admin/balanceIntegrity.service').startBalanceIntegrityScanner();
 }
 
 async function shutdown(signal) {

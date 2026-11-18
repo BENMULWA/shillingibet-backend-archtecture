@@ -116,6 +116,44 @@ const config = Object.freeze({
     sessionTtlHours: parseInt(process.env.EUROVIRTUALS_SESSION_TTL_HOURS, 10) || 24,
   },
 
+  // Charges on cash withdrawals: WITHDRAWAL_TAX_RATE is a fraction (0.05 = 5%) taken on every
+  // withdrawal; WITHDRAWAL_FEE is a flat KES amount taken only when the withdrawal is at least
+  // WITHDRAWAL_FEE_MIN_AMOUNT. Both are kept by the platform; the player receives the rest.
+  withdrawal: {
+    taxRate: Math.min(Math.max(Number(process.env.WITHDRAWAL_TAX_RATE ?? 0.05) || 0, 0), 0.5),
+    fee: Math.max(Number(process.env.WITHDRAWAL_FEE ?? 0) || 0, 0),
+    feeMinAmount: Math.max(Number(process.env.WITHDRAWAL_FEE_MIN_AMOUNT ?? 150) || 0, 0),
+  },
+
+  // Every withdrawal first checks the wallet is explained by deposits, play and recorded
+  // credits; an hourly scan flags any wallet that is not (see balanceIntegrity.service.js).
+  balanceIntegrity: {
+    enforceOnWithdrawal: process.env.BALANCE_INTEGRITY_ENFORCE !== 'false',
+    // A player must have at least one real completed deposit before any withdrawal.
+    requireDepositBeforeWithdrawal: process.env.REQUIRE_DEPOSIT_BEFORE_WITHDRAWAL !== 'false',
+    toleranceKes: Math.max(Number(process.env.BALANCE_INTEGRITY_TOLERANCE_KES) || 1, 0),
+    scanEnabled:
+      process.env.BALANCE_INTEGRITY_SCAN_ENABLED != null
+        ? process.env.BALANCE_INTEGRITY_SCAN_ENABLED === 'true'
+        : (process.env.NODE_ENV || 'development') === 'production',
+    scanMinutes: Math.max(Number(process.env.BALANCE_INTEGRITY_SCAN_MINUTES) || 60, 5),
+    // Who gets an SMS when an account is flagged. Defaults to the liquidity alert numbers.
+    alertPhones: (process.env.FRAUD_ALERT_PHONES || process.env.LIQUIDITY_ALERT_PHONES || '0714073826')
+      .split(',')
+      .map((phone) => phone.trim())
+      .filter(Boolean),
+  },
+
+  // Hourly record of Mamlaka pay-in and payout balances for daily reconciliation.
+  // Local development shares the live account, so only production records by default.
+  providerSnapshots: {
+    enabled:
+      process.env.PROVIDER_SNAPSHOTS_ENABLED != null
+        ? process.env.PROVIDER_SNAPSHOTS_ENABLED === 'true'
+        : (process.env.NODE_ENV || 'development') === 'production',
+    everyMinutes: Math.max(Number(process.env.PROVIDER_SNAPSHOT_MINUTES) || 60, 5),
+  },
+
   // Alerts for the real money at the payment provider (Mamlaka payout balance).
   liquidity: {
     alertPhones: (process.env.LIQUIDITY_ALERT_PHONES || '0714073826')

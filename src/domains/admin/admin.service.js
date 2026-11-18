@@ -55,7 +55,7 @@ const getOverview = async ({ dateFrom, dateTo }) => {
   const rollbackMatch = { action: 'rollback_bet' };
   if (createdRange) rollbackMatch.createdAt = createdRange;
 
-  const [registeredUsers, referredUsers, totalReferralBonus, totalBetAmount, totalWinAmount, totalDeposits, totalWithdrawals, totalRollbackAmount, playersBalance, lostStakeTotal] =
+  const [registeredUsers, referredUsers, totalReferralBonus, totalBetAmount, totalWinAmount, totalDeposits, totalWithdrawals, totalRollbackAmount, playersBalance, lostStakeTotal, withdrawalTax, withdrawalFees, withdrawalsPaidOut] =
     await Promise.all([
       countDocs(User, userMatch),
       countDocs(User, referredUserMatch),
@@ -67,6 +67,13 @@ const getOverview = async ({ dateFrom, dateTo }) => {
       sumField(VirtualTxn, rollbackMatch, 'delta').then((v) => round2(Math.abs(v))),
       sumField(User, { role: 'user' }, 'balance'),
       sumField(Bet, betLostMatch, 'stake'),
+      // Charges kept from completed cash withdrawals (see withdrawalCharges.js).
+      sumField(Transaction, withdrawalMatch, 'taxAmount'),
+      sumField(Transaction, withdrawalMatch, 'feeAmount'),
+      Transaction.aggregate([
+        { $match: withdrawalMatch },
+        { $group: { _id: null, total: { $sum: { $ifNull: ['$netAmount', '$amount'] } } } },
+      ]).then((rows) => round2(rows[0]?.total || 0)),
     ]);
 
   return {
@@ -83,7 +90,12 @@ const getOverview = async ({ dateFrom, dateTo }) => {
       profit: round2(lostStakeTotal - totalWinAmount),
       deposits: totalDeposits,
       withdrawals: totalWithdrawals,
-      tax: 0,
+      tax: withdrawalTax,
+      withdrawalTax,
+      withdrawalFees,
+      // What actually left the business; `withdrawals` is what was debited from wallets.
+      withdrawalsPaidOut,
+      withdrawalCharges: round2(withdrawalTax + withdrawalFees),
       referralBonus: totalReferralBonus,
       cashback: 0,
       rollbackAmount: totalRollbackAmount,

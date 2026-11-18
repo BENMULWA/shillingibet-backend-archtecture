@@ -17,6 +17,17 @@ const overview = z
     }
   });
 
+const financeReport = z
+  .object({
+    dateFrom: z.coerce.date().optional(),
+    dateTo: z.coerce.date().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.dateFrom && value.dateTo && value.dateFrom > value.dateTo) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['dateFrom'], message: 'dateFrom must be before or equal to dateTo' });
+    }
+  });
+
 const reconcileVirtualBet = z.object({
   betId: z.string().min(1),
   gameUuid: z.string().min(1).optional(),
@@ -45,6 +56,7 @@ const payoutFloatAllocation = z.object({
 });
 
 module.exports = {
+  financeReport,
   overview,
   reconcileVirtualBet,
   transactions,

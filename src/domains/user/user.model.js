@@ -55,9 +55,10 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true, minlength: 8, select: false },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
     isStaff: { type: Boolean, default: false, index: true },
+    // Key of the staff member's StaffRole (e.g. support, finance, super_admin).
     adminLevel: {
       type: String,
-      enum: ['support', 'admin', 'super_admin', null],
+      match: /^[a-z][a-z0-9_]{1,39}$/,
       default: null,
       index: true,
     },

@@ -97,6 +97,15 @@ const loadService = ({ airtimeResponse, airtimeError } = {}) => {
       };
     }
 
+    if (request === '../admin/balanceIntegrity.service' && parent?.filename === servicePath) {
+      return {
+        async assertBalanceBacked(user) {
+          state.integrityChecks = (state.integrityChecks || 0) + 1;
+          if (state.unbackedBalance) throw Object.assign(new Error('Withdrawals are on hold'), { statusCode: 403 });
+          return user;
+        },
+      };
+    }
     if (request === '../admin/payoutFloat.service' && parent?.filename === servicePath) {
       return {
         requirePayoutCapacity: async (payload) => {
@@ -188,7 +197,8 @@ test('KES Mamlaka withdrawal checks payout float before debiting player balance'
   );
 
   assert.equal(state.floatRequired.length, 1);
-  assert.equal(state.floatRequired[0].amount, 75);
+  // The float only has to cover what is paid out: 75 less 5% withholding tax.
+  assert.equal(state.floatRequired[0].amount, 71.25);
   assert.equal(state.floatRequired[0].user.phone, '254700000001');
   assert.equal(state.userUpdates.length, 0);
   assert.equal(state.createdTransactions.length, 0);

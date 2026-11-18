@@ -9,6 +9,8 @@ const { normalizePhone } = require('../../utils/phone');
 const smsService = require('../../services/sms.service');
 const User = require('./user.model');
 const { getStaffLevel, isStaffUser } = require('../../middlewares/auth');
+const staffRoles = require('../admin/staffRole.service');
+const BalanceAdjustment = require('../admin/balanceAdjustment.model');
 const { normalizeReferralCode, makeReferralCodeCandidate } = require('./referral');
 const authEvents = require('../admin/authEvent.service');
 const { incWalletBalance, normalizeWalletType } = require('../../utils/db');
@@ -170,7 +172,7 @@ const staffLogin = async ({ phone, password }, context = {}) => {
   // schema keeps the broad role as `admin` and the precise level in `adminLevel`.
   user.isStaff = true;
   if (!user.adminLevel && legacyStaffLevel) user.adminLevel = legacyStaffLevel;
-  if (user.role !== 'admin') user.role = 'admin';
+  if (legacyStaffLevel && user.role !== 'admin') user.role = 'admin';
 
   const code = generateStaffLoginCode();
   const now = new Date();
@@ -236,7 +238,10 @@ const verifyStaffLogin = async ({ challengeId, code }, context = {}) => {
   }
 
   await authEvents.record({ type: 'staff_login_success', outcome: 'success', user, context });
-  return { user: user.toJSON(), token: signToken(user, { mfa: true }) };
+  return {
+    user: { ...user.toJSON(), permissions: await staffRoles.permissionsFor(getStaffLevel(user)) },
+    token: signToken(user, { mfa: true }),
+  };
 };
 
 const resendStaffLoginCode = async ({ challengeId }) => {
@@ -356,21 +361,39 @@ const getById = async (id) => {
   return {
     ...user.toJSON(),
     referral: await buildReferralProfile(user),
+    ...(isStaffUser(user) ? { permissions: await staffRoles.permissionsFor(getStaffLevel(user)) } : {}),
   };
 };
 
-const deposit = async (id, amount, walletType) => {
+// Manual staff credit. Always writes a BalanceAdjustment so the credit is explained in the
+// player's ledger (and the balance-integrity check does not flag it).
+const deposit = async (id, amount, walletType, { actor, reason } = {}) => {
+  if (!actor?._id) throw ApiError.forbidden('Manual credits must be made by a staff member');
   const existingUser = await User.findById(id).select('activeWallet').lean();
   if (!existingUser) throw ApiError.notFound('User not found');
 
   const targetWallet = normalizeWalletType(walletType || existingUser.activeWallet);
-  const user = await User.findByIdAndUpdate(
+  const before = await User.findByIdAndUpdate(
     id,
     incWalletBalance(targetWallet, amount),
-    { new: true }
+    { new: false }
   ).lean();
-  if (!user) throw ApiError.notFound('User not found');
-  return user;
+  if (!before) throw ApiError.notFound('User not found');
+  const field = targetWallet === 'airtime' ? 'airtimeBalance' : 'balance';
+  const balanceBefore = Number(before[field]) || 0;
+  const balanceAfter = Math.round((balanceBefore + amount) * 100) / 100;
+  await BalanceAdjustment.create({
+    type: 'admin_credit',
+    user: before._id,
+    actor: actor._id,
+    amount,
+    balanceBefore,
+    balanceAfter,
+    bonusBalanceBefore: Number(before.bonusBalance) || 0,
+    bonusBalanceAfter: Number(before.bonusBalance) || 0,
+    reason: reason || 'Manual credit from the back office',
+  });
+  return { ...before, [field]: balanceAfter };
 };
 
 const setActiveWallet = async (id, wallet) => {
@@ -396,6 +419,7 @@ const updateStaffAccess = async (actor, userId, { isStaff, adminLevel }) => {
   if (isStaff && !nextAdminLevel) {
     throw ApiError.badRequest('adminLevel is required when staff access is enabled');
   }
+  if (nextAdminLevel) await staffRoles.assertRoleExists(nextAdminLevel);
 
   const user = await User.findByIdAndUpdate(
     userId,
