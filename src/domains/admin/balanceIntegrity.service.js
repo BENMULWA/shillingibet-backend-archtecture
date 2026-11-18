@@ -1,3 +1,7 @@
+
+//ANOMALY DETECTION: FOR USER BALANCE AND ANOMALLY DETECTION
+
+
 'use strict';
 
 // Balance integrity: every shilling in a player's wallet must be explained by a record.
@@ -52,7 +56,15 @@ const ledgerFor = async (userMatch) => {
       ],
     }),
     sumByUser(CashbackAward, scope, '$amount'),
-    sumByUser(BalanceAdjustment, scope, { $subtract: ['$balanceAfter', '$balanceBefore'] }),
+    // A super-admin balance review doesn't move money; it records that the reviewed
+    // amount is legitimate, so it counts as explained (its `amount`).
+    sumByUser(BalanceAdjustment, scope, {
+      $cond: [
+        { $eq: ['$type', 'integrity_review'] },
+        '$amount',
+        { $subtract: ['$balanceAfter', '$balanceBefore'] },
+      ],
+    }),
   ]);
   return { deposits, withdrawals, virtual, sportsbook, cashback, adjustments };
 };
@@ -160,6 +172,41 @@ const assertBalanceBacked = async (user) => {
   throw ApiError.forbidden('Withdrawals are on hold for this account while it is reviewed. Please contact support.');
 };
 
+// Super admin confirms an account's unexplained balance is legitimate (e.g. old test or
+// staff credits that were never recorded). Records the approved amount in the ledger so
+// the check passes from now on, lifts the withdrawal pause, and tells the alert phones.
+// Every approval is permanent and audited; it never changes the balance itself.
+const approveBalance = async ({ actor, userId, reason }) => {
+  const ApiError = require('../../utils/ApiError');
+  const before = await checkUser(userId);
+  if (!before) throw ApiError.notFound('Player not found');
+
+  let adjustment = null;
+  if (before.excess > 0) {
+    const current = await User.findById(userId).select('balance bonusBalance').lean();
+    adjustment = await BalanceAdjustment.create({
+      type: 'integrity_review',
+      user: userId,
+      actor: actor._id,
+      amount: before.excess,
+      balanceBefore: num(current.balance),
+      balanceAfter: num(current.balance),
+      bonusBalanceBefore: num(current.bonusBalance),
+      bonusBalanceAfter: num(current.bonusBalance),
+      reason,
+    });
+  }
+  await User.updateOne({ _id: userId }, { $set: { withdrawalPaused: false } });
+
+  const sms = `Bingwake: ${actor.phone} approved KES ${before.excess} on account ${before.phone} and re-enabled withdrawals. Reason: ${reason}`.slice(0, 300);
+  await Promise.all(
+    config.balanceIntegrity.alertPhones.map((phone) => smsService.safeSend({ phone, message: sms, context: 'fraud_balance_approved' }))
+  );
+  logger.warn('Balance approved by super admin', actor.phone, before.phone, before.excess, reason);
+
+  return { before, after: await checkUser(userId), adjustmentId: adjustment?._id || null };
+};
+
 let timer;
 const runScan = async () => {
   const { checked, anomalies } = await scanAll();
@@ -178,4 +225,4 @@ const startBalanceIntegrityScanner = () => {
   timer.unref();
 };
 
-module.exports = { hasRealDeposit, checkUser, scanAll, runScan, assertBalanceBacked, flagAndPause, evaluate, startBalanceIntegrityScanner };
+module.exports = { approveBalance, hasRealDeposit, checkUser, scanAll, runScan, assertBalanceBacked, flagAndPause, evaluate, startBalanceIntegrityScanner };

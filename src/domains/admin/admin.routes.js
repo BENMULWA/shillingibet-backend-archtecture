@@ -68,6 +68,9 @@ router.get('/users', can('players.view'), validate({ query: mgmt.listUsers }), c
 router.patch('/users/:id/controls', can('players.edit'), validate({ body: mgmt.userControls }), controller.updateUserControls);
 router.post('/users/:id/zero-balance', can('players.edit'), validate({ body: mgmt.zeroBalance }), controller.zeroUserBalance);
 router.delete('/users/:id', can('players.delete'), controller.deleteUser);
+// Balance check for one player, and the super-admin approval that clears a flag.
+router.get('/users/:id/balance-integrity', can('players.view', 'fraud.view'), validate({ params: mgmt.staffParams }), controller.playerBalanceIntegrity);
+router.post('/users/:id/balance-review', requireSuperAdmin, validate({ params: mgmt.staffParams, body: mgmt.balanceReview }), controller.approvePlayerBalance);
 router.get('/bets', can('bets.view'), validate({ query: mgmt.listBets }), controller.listBets);
 
 // Fraud and bonuses

@@ -102,3 +102,9 @@ test('a flagged account pauses withdrawals, alerts the dashboard and SMSes the s
   await service.flagAndPause(flagged, { reason: 'again' });
   assert.equal(state.sms.length, 2); // no repeat SMS inside the alert window
 });
+
+test('an approved review explains the reviewed amount', () => {
+  // An integrity_review adjustment counts at its amount; the balance itself is unchanged.
+  const r = evaluate(user({ balance: 338.53, referralStats: { bonusEarned: 40 } }), ledger({ deposits: 1544, withdrawals: 2737, virtual: -2355.32, cashback: 7.8, adjustments: 3839.05 }));
+  assert.equal(r.anomalous, false);
+});

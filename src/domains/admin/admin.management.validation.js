@@ -106,6 +106,10 @@ const updateRole = z.object({
 
 const roleParams = z.object({ key: roleKey });
 
+const balanceReview = z.object({
+  reason: z.string().trim().min(10, 'Explain why this balance is legitimate (at least 10 characters)').max(500),
+}).strict();
+
 const createStaff = z.object({
   phone: z
     .string()
@@ -296,6 +300,7 @@ module.exports = {
   createRole,
   updateRole,
   roleParams,
+  balanceReview,
   createStaff,
   listStaff,
   staffParams,

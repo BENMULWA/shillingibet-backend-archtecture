@@ -125,6 +125,29 @@ const balanceIntegrityReport = asyncHandler(async (_req, res) => {
   sendSuccess(res, { data: await balanceIntegrity.scanAll() });
 });
 
+const playerBalanceIntegrity = asyncHandler(async (req, res) => {
+  const data = await balanceIntegrity.checkUser(req.params.id);
+  if (!data) return res.status(404).json({ success: false, message: 'Player not found' });
+  return sendSuccess(res, { data });
+});
+
+const approvePlayerBalance = asyncHandler(async (req, res) => {
+  const result = await balanceIntegrity.approveBalance({ actor: req.user, userId: req.params.id, reason: req.body.reason });
+  res.locals.audit = {
+    action: 'player.balance_approved',
+    targetUser: req.params.id,
+    reason: req.body.reason,
+    changes: {
+      approvedAmount: result.before.excess,
+      balance: result.before.actual,
+      expectedBefore: result.before.expected,
+      parts: result.before.parts,
+      selfApproval: String(req.user._id) === String(req.params.id),
+    },
+  };
+  sendSuccess(res, { message: 'Balance approved and withdrawals re-enabled', data: result.after });
+});
+
 const financeReport = asyncHandler(async (req, res) => {
   sendSuccess(res, { data: await financeService.getFinanceReport(req.query) });
 });
@@ -302,6 +325,8 @@ module.exports = {
   listRoles,
   financeReport,
   balanceIntegrityReport,
+  playerBalanceIntegrity,
+  approvePlayerBalance,
   exportFinanceReport,
   createRole,
   updateRole,

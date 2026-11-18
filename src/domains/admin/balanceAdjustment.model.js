@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 // Append-only ledger of manual balance changes made by staff.
 const balanceAdjustmentSchema = new mongoose.Schema(
   {
-    type: { type: String, enum: ['admin_credit', 'admin_zero_balance'], required: true, immutable: true, index: true },
+    type: { type: String, enum: ['admin_credit', 'admin_zero_balance', 'integrity_review'], required: true, immutable: true, index: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, immutable: true, index: true },
     actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, immutable: true, index: true },
     amount: { type: Number, required: true, immutable: true },
