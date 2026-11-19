@@ -178,6 +178,29 @@ const approvePlayerBalance = asyncHandler(async (req, res) => {
 
 // Phone numbers of players who can receive a bulk SMS (Bulk SMS "Load all players").
 // Served under /exports so the audit log records it as a personal-data export.
+const reconcileWithdrawal = asyncHandler(async (req, res) => {
+  const data = await transactionService.reconcileWithdrawalByAdmin(req.params.transactionId);
+  res.locals.audit = { action: 'withdrawal.recheck_provider', changes: { transactionId: req.params.transactionId, providerStatus: data.providerStatus, changed: data.changed } };
+  sendSuccess(res, {
+    message: data.changed ? `Withdrawal marked ${data.providerStatus}` : data.message,
+    data,
+  });
+});
+
+const resolveWithdrawal = asyncHandler(async (req, res) => {
+  const data = await transactionService.manuallyResolveWithdrawal(req.params.transactionId, req.user, req.body);
+  res.locals.audit = {
+    action: `withdrawal.manual_${req.body.status}`,
+    targetUser: data.user,
+    reason: req.body.reason,
+    changes: { transactionId: req.params.transactionId, externalId: data.externalId, amount: data.amount, status: req.body.status, providerReference: req.body.providerReference },
+  };
+  sendSuccess(res, {
+    message: req.body.status === 'failed' ? 'Withdrawal marked failed and refunded' : 'Withdrawal marked completed',
+    data,
+  });
+});
+
 const smsRecipients = asyncHandler(async (req, res) => {
   const User = require('../user/user.model');
   const includeUnverified = req.query.includeUnverified === 'true';
@@ -369,6 +392,8 @@ module.exports = {
   listRoles,
   financeReport,
   smsRecipients,
+  reconcileWithdrawal,
+  resolveWithdrawal,
   balanceIntegrityReport,
   playerBalanceIntegrity,
   approvePlayerBalance,

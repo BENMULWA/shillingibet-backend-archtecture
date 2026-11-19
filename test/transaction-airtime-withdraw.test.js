@@ -197,8 +197,8 @@ test('KES Mamlaka withdrawal checks payout float before debiting player balance'
   );
 
   assert.equal(state.floatRequired.length, 1);
-  // The float only has to cover what is paid out: 75 less 5% withholding tax.
-  assert.equal(state.floatRequired[0].amount, 71.25);
+  // The float only has to cover what is paid out: 75 less 5% tax = 71.25, paid as whole KES 71.
+  assert.equal(state.floatRequired[0].amount, 71);
   assert.equal(state.floatRequired[0].user.phone, '254700000001');
   assert.equal(state.userUpdates.length, 0);
   assert.equal(state.createdTransactions.length, 0);

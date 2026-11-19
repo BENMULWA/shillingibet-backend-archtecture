@@ -26,6 +26,9 @@ router.get('/analytics/activity', can('dashboard.view'), validate({ query: schem
 
 // Money
 router.get('/transactions', can('transactions.view'), validate({ query: schemas.transactions }), controller.transactions);
+// Stuck withdrawals: ask Mamlaka, or resolve after confirming with the provider.
+router.post('/transactions/:transactionId/reconcile', can('transactions.reconcile'), validate({ params: mgmt.transactionParams }), controller.reconcileWithdrawal);
+router.post('/transactions/:transactionId/resolve', can('transactions.resolve'), validate({ params: mgmt.transactionParams, body: mgmt.manualWithdrawalResolution }), controller.resolveWithdrawal);
 router.get('/treasury/withdrawals', can('treasury.view'), controller.getPayoutFloat);
 router.get('/treasury/withdrawals/movements', can('treasury.view'), controller.listTreasuryMovements);
 

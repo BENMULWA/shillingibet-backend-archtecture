@@ -18,6 +18,8 @@ const transactionSchema = new mongoose.Schema(
     taxRate: { type: Number, default: null },
     taxAmount: { type: Number, default: null, min: 0 },
     feeAmount: { type: Number, default: null, min: 0 },
+    // Cents left after rounding the payout down to whole shillings (M-Pesa pays whole KES).
+    roundingAmount: { type: Number, default: null, min: 0 },
     netAmount: { type: Number, default: null, min: 0 },
     currency: { type: String, required: true, default: 'KES' },
     walletType: { type: String, enum: ['balance', 'airtime'], default: 'balance', index: true },

@@ -502,11 +502,12 @@ test('withdrawComet reserves the main balance and submits a credit order', async
   assert.equal(result.status, 'completed');
   assert.equal(state.creditPayload.direction, 'credit');
   // Comet is sent the net amount; the wallet is still debited the full 10.
-  assert.equal(state.creditPayload.amount, 9.5);
+  assert.equal(state.creditPayload.amount, 9); // 10 - 0.50 tax = 9.50, paid as whole KES 9
   assert.equal(state.createdTransactions[0].amount, 10);
   assert.equal(state.createdTransactions[0].taxAmount, 0.5);
   assert.equal(state.createdTransactions[0].feeAmount, 0);
-  assert.equal(state.createdTransactions[0].netAmount, 9.5);
+  assert.equal(state.createdTransactions[0].netAmount, 9);
+  assert.equal(state.createdTransactions[0].roundingAmount, 0.5);
   assert.equal(state.creditPayload.currency, 'KES');
   assert.match(state.creditPayload.external_ref, /^COMET-KES-WDR-/);
   assert.equal(state.creditPayload.email, 'player@example.com');
@@ -514,7 +515,7 @@ test('withdrawComet reserves the main balance and submits a credit order', async
   assert.equal(state.createdTransactions[0].type, 'withdrawal');
   assert.equal(state.createdTransactions[0].secureId, '77');
   assert.equal(state.floatRequired.length, 1);
-  assert.equal(state.floatRequired[0].amount, 9.5);
+  assert.equal(state.floatRequired[0].amount, 9);
   assert.equal(state.floatRequired[0].user.name, undefined);
   assert.equal(state.floatSettlements[0].options, undefined);
   assert.equal(state.walletUpdates[0].query.balance.$gte, 10);
@@ -598,7 +599,7 @@ test('withdrawComet blocks KES payouts before debiting the player when float is 
   assert.deepEqual(state.floatAlert, {
     phone: '0714073826',
     userName: 'Player One',
-    amount: 9.5,
+    amount: 9,
   });
 });
 

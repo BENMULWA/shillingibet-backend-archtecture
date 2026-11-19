@@ -17,7 +17,7 @@ const Transaction = require('./transaction.model');
 const User = require('../user/user.model');
 const { qualifiesForReferralBonus } = require('../user/referral');
 const payoutFloatService = require('../admin/payoutFloat.service');
-const { computeWithdrawalCharges, payoutAmountOf, sameAmount } = require('./withdrawalCharges');
+const { computeWithdrawalCharges, payoutAmountOf, matchesPayout } = require('./withdrawalCharges');
 const balanceIntegrity = require('../admin/balanceIntegrity.service');
 const notificationService = require('../notification/notification.service');
 const liquidityAlert = require('../admin/liquidityAlert.service');
@@ -161,6 +161,7 @@ const withdraw = async (user, { amount, phone, provider, walletType: requestedWa
         taxRate: charges.taxRate,
         taxAmount: charges.taxAmount,
         feeAmount: charges.feeAmount,
+        roundingAmount: charges.roundingAmount,
         netAmount: charges.netAmount,
       } : {}),
       currency,
@@ -286,7 +287,7 @@ const validateCallbackForTxn = (txn, type, payload, expectedType) => {
     return { ok: false, reason: 'secureId mismatch' };
   }
 
-  if (payload.amount != null && !sameAmount(payload.amount, payoutAmountOf(txn))) {
+  if (payload.amount != null && !matchesPayout(payload.amount, txn)) {
     logger.warn('Callback amount mismatch', payload.externalId, payload.amount, payoutAmountOf(txn));
     return { ok: false, reason: 'amount mismatch' };
   }
@@ -604,7 +605,69 @@ const getById = async (userId, id) => {
   return txn;
 };
 
+// ---------------------------------------------------------------------------------------------
+// Staff tools for withdrawals stuck on "pending" (Transactions page: Recheck / Mark completed /
+// Fail & refund). Both go through handleCallback, the same path as the provider's own callback,
+// so wallet refunds, payout-float release and the player's SMS behave exactly as normal.
+// ---------------------------------------------------------------------------------------------
+const isMpesaWithdrawal = (txn) => ['m-pesa', 'mpesa'].includes(String(txn.provider || '').toLowerCase());
+
+const findPendingWithdrawal = async (id) => {
+  const txn = await Transaction.findOne({ _id: id, type: 'withdrawal' }).lean();
+  if (!txn) throw ApiError.notFound('Withdrawal not found');
+  if (txn.status !== 'pending') throw ApiError.conflict(`Withdrawal is already ${txn.status}`);
+  return txn;
+};
+
+// "Recheck Mamlaka status": asks Mamlaka what happened and applies the answer.
+const reconcileWithdrawalByAdmin = async (id) => {
+  const txn = await findPendingWithdrawal(id);
+  if (!isMpesaWithdrawal(txn)) {
+    return { transaction: txn, providerStatus: 'unverifiable', changed: false,
+      message: `${txn.provider} has no status lookup. Confirm with the provider, then resolve manually.` };
+  }
+  let providerStatus;
+  try {
+    providerStatus = await mamlaka.getTransactionStatus(txn.secureId || txn.externalId);
+  } catch (error) {
+    return { transaction: txn, providerStatus: 'not_found', changed: false,
+      message: `Mamlaka has no result for this withdrawal (${error.message}). Confirm with Mamlaka, then resolve manually.` };
+  }
+  const status = mapStatus(providerStatus.transactionStatus || providerStatus.status);
+  if (status === 'pending') {
+    return { transaction: txn, providerStatus: 'pending', changed: false, message: 'Still pending at Mamlaka' };
+  }
+  const result = await handleCallback('withdraw', {
+    ...providerStatus,
+    externalId: txn.externalId,
+    secureId: providerStatus.secureId || txn.secureId,
+    amount: providerStatus.amount ?? payoutAmountOf(txn),
+  });
+  if (!result.ok) throw ApiError.badRequest(`Could not apply Mamlaka's result: ${result.reason}`);
+  return { transaction: await Transaction.findById(txn._id).lean(), providerStatus: status, changed: true };
+};
+
+// "Mark completed" / "Fail & refund": staff confirmed the outcome with the provider.
+// completed: no wallet change; the float reservation is settled.
+// failed:    the full amount goes back to the player's wallet; the float reservation is released.
+const manuallyResolveWithdrawal = async (id, actor, { status, providerReference, reason }) => {
+  const txn = await findPendingWithdrawal(id);
+  const result = await handleCallback('withdraw', {
+    externalId: txn.externalId,
+    ...(txn.secureId ? { secureId: txn.secureId } : {}),
+    transactionStatus: status === 'completed' ? 'COMPLETED' : 'FAILED',
+    amount: payoutAmountOf(txn),
+    transactionReceipt: providerReference,
+    reason,
+    manualResolution: { by: String(actor._id), byPhone: actor.phone, reason, providerReference, at: new Date().toISOString() },
+  });
+  if (!result.ok) throw ApiError.badRequest(`Could not resolve the withdrawal: ${result.reason}`);
+  return Transaction.findById(txn._id).lean();
+};
+
 module.exports = {
+  reconcileWithdrawalByAdmin,
+  manuallyResolveWithdrawal,
   deposit,
   withdraw,
   settleRejectedWithdrawal,

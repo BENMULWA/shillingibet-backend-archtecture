@@ -16,7 +16,7 @@ const mamlakaCelo = require('../../integrations/mamlaka/celo.client');
 const Transaction = require('../transaction/transaction.model');
 const User = require('../user/user.model');
 const payoutFloatService = require('../admin/payoutFloat.service');
-const { computeWithdrawalCharges, payoutAmountOf, sameAmount } = require('../transaction/withdrawalCharges');
+const { computeWithdrawalCharges, payoutAmountOf, matchesPayout } = require('../transaction/withdrawalCharges');
 const balanceIntegrity = require('../admin/balanceIntegrity.service');
 
 const makeCometRef = (type, currency, reference = '') => {
@@ -155,6 +155,7 @@ const withdrawComet = async (user, { amount, email, walletType: requestedWalletT
         taxRate: charges.taxRate,
         taxAmount: charges.taxAmount,
         feeAmount: charges.feeAmount,
+        roundingAmount: charges.roundingAmount,
         netAmount: charges.netAmount,
       } : {}),
       currency,
@@ -474,7 +475,7 @@ const validateCallbackForTxn = (txn, payload) => {
     return { ok: false, reason: 'unknown transaction' };
   }
 
-  if (payload.amount != null && !sameAmount(payload.amount, payoutAmountOf(txn))) {
+  if (payload.amount != null && !matchesPayout(payload.amount, txn)) {
     logger.warn('Comet callback amount mismatch', payload.external_ref, payload.amount, payoutAmountOf(txn));
     return { ok: false, reason: 'amount mismatch' };
   }
