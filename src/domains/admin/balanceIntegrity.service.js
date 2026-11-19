@@ -1,6 +1,5 @@
 
-//ANOMALY DETECTION: FOR USER BALANCE AND ANOMALLY DETECTION
-
+//ANOMALY DETECTION SCRIPT: FOR USER BALANCE AND ANOMALLY DETECTION
 
 'use strict';
 
@@ -157,9 +156,17 @@ const hasRealDeposit = async (userId) =>
   );
 
 // Called inside every withdrawal (M-Pesa, Comet, Celo, airtime) before any money moves:
+// 0. the player's phone number must be verified;
 // 1. the player must have made at least one real deposit;
 // 2. the balance must be explained by their history.
 const assertBalanceBacked = async (user) => {
+  // 0. Identity first: only players who verified their phone number can withdraw.
+  //    Read fresh from the database, never from the copy attached to the request.
+  const account = await User.findById(user._id).select('phoneVerified').lean();
+  if (account?.phoneVerified !== true) {
+    const ApiError = require('../../utils/ApiError');
+    throw ApiError.forbidden('Please verify your phone number if it was not verified during registration.');
+  }
   if (config.balanceIntegrity.requireDepositBeforeWithdrawal && !(await hasRealDeposit(user._id))) {
     const ApiError = require('../../utils/ApiError');
     throw ApiError.forbidden('Please make a deposit before your first withdrawal.');
@@ -226,3 +233,67 @@ const startBalanceIntegrityScanner = () => {
 };
 
 module.exports = { approveBalance, hasRealDeposit, checkUser, scanAll, runScan, assertBalanceBacked, flagAndPause, evaluate, startBalanceIntegrityScanner };
+
+// =============================================================================================
+// SUMMARY FOR CODE REVIEW AND AUDIT
+// =============================================================================================
+//
+// 1. PURPOSE: stop money that was never paid in or won from leaving the platform. Every shilling
+//    in a wallet must be explained by a record the app itself writes.
+//
+// 2. WHAT IT FLAGS: balances raised directly in the database (Atlas / Compass) or credited
+//    outside the recorded paths, with no deposit, game result, bonus or staff adjustment behind it.
+//
+// 3. THE RULE: excess = actual balance (main + airtime) - balance explained by history.
+//    Flagged when excess > KES 1 (BALANCE_INTEGRITY_TOLERANCE_KES) or > 0.5% of the balance.
+//
+// 4. WHAT COUNTS AS EXPLAINED (ledgerFor / evaluate):
+//    + completed deposits (transactions)       - completed and pending withdrawals (transactions)
+//    + virtual game deltas (virtualtxns)       + sportsbook results (bets: -stake, +payout, +void)
+//    + cashback (cashbackawards)               + referral earnings and welcome bonus (user fields)
+//    + staff credits, zeroed balances and super-admin reviews (balanceadjustments)
+//
+// 5. SHORTFALLS (balance lower than history) are counted but never blocked: no money can leave.
+//
+// 6. WITHDRAWAL CHECKS (assertBalanceBacked), run before ANY money moves on M-Pesa, airtime,
+//    Comet and Celo, in this order:
+//    6.1 Phone number verified (read fresh from the database)
+//        -> 403 "Please verify your phone number if it was not verified during registration."
+//    6.2 At least one real completed deposit (REQUIRE_DEPOSIT_BEFORE_WITHDRAWAL)
+//        -> 403 "Please make a deposit before your first withdrawal."
+//    6.3 Balance explained by history (BALANCE_INTEGRITY_ENFORCE)
+//        -> 403 "Withdrawals are on hold for this account while it is reviewed..."
+//
+// 7. ON A FLAG (flagAndPause): withdrawals paused on the account, a critical dashboard
+//    notification ("Unbacked balance: withdrawals paused") and an SMS to FRAUD_ALERT_PHONES,
+//    at most once per account every 30 minutes.
+//
+// 8. HOURLY SCAN (runScan / startBalanceIntegrityScanner): every BALANCE_INTEGRITY_SCAN_MINUTES
+//    (default 60), production only. Flags and pauses new unbacked wallets; skips paused ones.
+//
+// 9. WHAT IT NEVER DOES: change a balance, or suspend an account. Players can still log in and
+//    bet; only withdrawals stop. Zeroing a balance is a separate, recorded staff action.
+//
+// 10. WHAT IT CANNOT CATCH: fake DEPOSIT records. The paybill reconciliation on the Finance page
+//     catches those, because they never appear on the Mamlaka statement.
+//
+// 11. CLEARING A FLAG (approveBalance): super admin only, reason of at least 10 characters.
+//     Records an "integrity_review" adjustment for the excess (the balance itself is unchanged),
+//     lifts the pause, sends an SMS, and is audited as "player.balance_approved"
+//     (selfApproval: true when a super admin approves their own account).
+//
+// 12. WHERE TO FIND THE EVIDENCE:
+//     - adminaudits: player.balance_approved, player.freeze_anomalous, withdrawal.cleanup
+//     - balanceadjustments (cannot be edited): admin_credit, admin_zero_balance, integrity_review
+//     - notifications: type fraud_alert, severity critical
+//
+// 13. ENDPOINTS:
+//     - GET  /admin/fraud/balance-integrity       all anomalies          (fraud.view)
+//     - GET  /admin/users/:id/balance-integrity   one player's check     (players.view or fraud.view)
+//     - POST /admin/users/:id/balance-review      approve a balance      (super admin)
+//
+// 14. SETTINGS (.env):
+//     BALANCE_INTEGRITY_ENFORCE=true         REQUIRE_DEPOSIT_BEFORE_WITHDRAWAL=true
+//     BALANCE_INTEGRITY_TOLERANCE_KES=1      BALANCE_INTEGRITY_SCAN_MINUTES=60
+//     BALANCE_INTEGRITY_SCAN_ENABLED=(default: on in production)   FRAUD_ALERT_PHONES=0714073826
+// =============================================================================================

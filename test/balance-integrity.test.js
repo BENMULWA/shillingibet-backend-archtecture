@@ -50,9 +50,32 @@ test('a few cents of rounding are tolerated', () => {
   assert.equal(r.anomalous, false);
 });
 
+// The guard reads phoneVerified from the database; tests replace that lookup.
+const User = require('../src/domains/user/user.model');
+const withVerified = (phoneVerified) => {
+  const original = User.findById;
+  User.findById = () => ({ select: () => ({ lean: async () => ({ _id: 'u1', phoneVerified }) }) });
+  return () => { User.findById = original; };
+};
+
+test('a player whose phone is not verified cannot withdraw', async () => {
+  for (const value of [false, undefined]) {
+    const restore = withVerified(value);
+    try {
+      await assert.rejects(
+        assertBalanceBacked({ _id: 'u1', phoneVerified: true }), // the request copy is ignored
+        (err) => err.statusCode === 403 && /verify your phone number/.test(err.message)
+      );
+    } finally {
+      restore();
+    }
+  }
+});
+
 test('a player who never deposited cannot withdraw, whatever the balance', async () => {
   const saved = { ...config.balanceIntegrity };
   const originalExists = Transaction.exists;
+  const restoreVerified = withVerified(true);
   Object.assign(config.balanceIntegrity, { requireDepositBeforeWithdrawal: true, enforceOnWithdrawal: false });
   try {
     let query;
@@ -66,6 +89,7 @@ test('a player who never deposited cannot withdraw, whatever the balance', async
     await assertBalanceBacked({ _id: 'u1' });
   } finally {
     Transaction.exists = originalExists;
+    restoreVerified();
     Object.assign(config.balanceIntegrity, saved);
   }
 });

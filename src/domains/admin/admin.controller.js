@@ -176,6 +176,22 @@ const approvePlayerBalance = asyncHandler(async (req, res) => {
   sendSuccess(res, { message: 'Balance approved and withdrawals re-enabled', data: result.after });
 });
 
+// Phone numbers of players who can receive a bulk SMS (Bulk SMS "Load all players").
+// Served under /exports so the audit log records it as a personal-data export.
+const smsRecipients = asyncHandler(async (req, res) => {
+  const User = require('../user/user.model');
+  const includeUnverified = req.query.includeUnverified === 'true';
+  const filter = {
+    deletedAt: null,
+    status: 'active',
+    isStaff: { $ne: true },
+    phone: /^254[17]\d{8}$/,
+    ...(includeUnverified ? {} : { phoneVerified: true }),
+  };
+  const phones = (await User.distinct('phone', filter)).sort();
+  sendSuccess(res, { data: { phones, count: phones.length, includeUnverified } });
+});
+
 const financeReport = asyncHandler(async (req, res) => {
   sendSuccess(res, { data: await financeService.getFinanceReport(req.query) });
 });
@@ -352,6 +368,7 @@ module.exports = {
   sendStaffPasswordReset,
   listRoles,
   financeReport,
+  smsRecipients,
   balanceIntegrityReport,
   playerBalanceIntegrity,
   approvePlayerBalance,

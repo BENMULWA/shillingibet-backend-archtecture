@@ -98,6 +98,7 @@ router.delete('/roles/:key', requireSuperAdmin, validate({ params: mgmt.rolePara
 // CSV exports
 router.get('/exports/users', can('players.export'), validate({ query: mgmt.exportRange }), controller.exportUsers);
 router.get('/exports/transactions', can('transactions.export'), validate({ query: mgmt.exportRange }), controller.exportTransactions);
+router.get('/exports/sms-recipients', can('sms.send'), controller.smsRecipients);
 router.get('/exports/bets', can('bets.export'), validate({ query: mgmt.exportRange }), controller.exportBets);
 
 // Free bets (campaigns live at the game provider)

@@ -9,3 +9,6 @@ coverage/
 dist/
 .idea/
 .vscode/
+
+# Exported phone numbers (personal data)
+sms-recipients*.txt
