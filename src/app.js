@@ -14,6 +14,7 @@ const { apiLimiter } = require('./middlewares/rateLimiter');
 const notFound = require('./middlewares/notFound');
 const errorHandler = require('./middlewares/errorHandler');
 const verifyMamlakaSignature = require('./middlewares/verifyMamlakaSignature');
+const { callbackIpAllowlist } = require('./middlewares/callbackIpAllowlist');
 const verifyCeloGatewaySignature = require('./middlewares/verifyCeloGatewaySignature');
 const verifyCometCallbackSignature = require('./middlewares/verifyCometCallbackSignature');
 const transactionController = require('./domains/transaction/transaction.controller');
@@ -23,6 +24,9 @@ const routes = require('./routes');
 const app = express();
 
 app.set('trust proxy', 1);
+
+// Mamlaka callbacks are accepted only from MAMLAKA_CALLBACK_IPS when it is set.
+const mamlakaCallbackIps = callbackIpAllowlist(() => config.mamlaka.callbackIps, 'Mamlaka');
 app.disable('x-powered-by');
 
 app.use(helmet());
@@ -33,6 +37,7 @@ app.use(compression());
 // exact request bytes sent by Mamlaka.
 app.post(
   '/callbacks/mamlaka',
+  mamlakaCallbackIps,
   express.raw({ type: '*/*', limit: '10kb' }),
   verifyMamlakaSignature,
   transactionController.mamlakaCallback

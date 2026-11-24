@@ -8,6 +8,7 @@ const { authenticate } = require("../../middlewares/auth");
 const { depositLimiter, withdrawalLimiter } = require("../../middlewares/rateLimiter");
 const config = require("../../config");
 const ApiError = require("../../utils/ApiError");
+const { callbackIpAllowlist } = require("../../middlewares/callbackIpAllowlist");
 
 const router = Router();
 
@@ -18,7 +19,9 @@ const verifyCallbackSecret = (req, _res, next) => {
   return next(ApiError.unauthorized("Invalid callback secret"));
 };
 
-router.post("/callback/:type", verifyCallbackSecret, controller.callback);
+// Mamlaka's servers only (MAMLAKA_CALLBACK_IPS), then the shared secret.
+const mamlakaCallbackIps = callbackIpAllowlist(() => config.mamlaka.callbackIps, "Mamlaka");
+router.post("/callback/:type", mamlakaCallbackIps, verifyCallbackSecret, controller.callback);
 
 router.use(authenticate);
 router.post(

@@ -24,6 +24,7 @@ async function start() {
   startLiquidityMonitor();
   require('./domains/admin/providerBalance.service').startProviderBalanceRecorder();
   require('./domains/admin/balanceIntegrity.service').startBalanceIntegrityScanner();
+  require('./domains/admin/gatewayWatch.service').startGatewayWatch();
 }
 
 async function shutdown(signal) {

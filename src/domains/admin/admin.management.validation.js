@@ -110,6 +110,17 @@ const balanceReview = z.object({
   reason: z.string().trim().min(10, 'Explain why this balance is legitimate (at least 10 characters)').max(500),
 }).strict();
 
+// Gateway watchdog review: what the super admin found, and whether to resume withdrawals.
+const gatewayAcknowledge = z.object({
+  reason: z.string().trim().min(10, 'Explain what caused the alert (at least 10 characters)').max(500),
+  resumeWithdrawals: z.boolean().default(false),
+}).strict();
+
+const gatewayHold = z.object({
+  active: z.boolean(),
+  reason: z.string().trim().min(5, 'Give a reason (at least 5 characters)').max(300),
+}).strict();
+
 const createStaff = z.object({
   phone: z
     .string()
@@ -301,6 +312,8 @@ module.exports = {
   updateRole,
   roleParams,
   balanceReview,
+  gatewayAcknowledge,
+  gatewayHold,
   createStaff,
   listStaff,
   staffParams,

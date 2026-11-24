@@ -57,6 +57,11 @@ const config = Object.freeze({
       `http://localhost:${process.env.PORT || 5050}`
     ).replace(/\/$/, ''),
     callbackSecret: process.env.MAMLAKA_CALLBACK_SECRET || '',
+    // Mamlaka's callback servers. Empty = accept callbacks from any address (signature still checked).
+    callbackIps: (process.env.MAMLAKA_CALLBACK_IPS || '')
+      .split(',')
+      .map((ip) => ip.trim())
+      .filter(Boolean),
   },
 
   mamlakaCelo: {
@@ -152,6 +157,31 @@ const config = Object.freeze({
         ? process.env.PROVIDER_SNAPSHOTS_ENABLED === 'true'
         : (process.env.NODE_ENV || 'development') === 'production',
     everyMinutes: Math.max(Number(process.env.PROVIDER_SNAPSHOT_MINUTES) || 60, 5),
+  },
+
+  // Gateway watchdog: reads the Mamlaka balances every minute and alerts when money leaves
+  // that Bingwake did not send (see gatewayWatch.service.js).
+  gatewayWatch: {
+    enabled:
+      process.env.GATEWAY_WATCH_ENABLED != null
+        ? process.env.GATEWAY_WATCH_ENABLED === 'true'
+        : (process.env.NODE_ENV || 'development') === 'production',
+    everySeconds: Math.max(Number(process.env.GATEWAY_WATCH_SECONDS) || 60, 30),
+    // Alert when this much leaves unexplained within the short window (KES)...
+    thresholdKes: Math.max(Number(process.env.GATEWAY_WATCH_THRESHOLD_KES) || 100, 1),
+    // ...or this much within the hour (catches slow, small drains).
+    hourThresholdKes: Math.max(Number(process.env.GATEWAY_WATCH_HOUR_THRESHOLD_KES) || 300, 1),
+    windowMinutes: Math.max(Number(process.env.GATEWAY_WATCH_WINDOW_MINUTES) || 10, 2),
+    // Allowance for provider charges on our own transactions, so they don't look like theft.
+    feePerTxnKes: Math.max(Number(process.env.GATEWAY_WATCH_FEE_PER_TXN_KES) || 35, 0),
+    feeRate: Math.max(Number(process.env.GATEWAY_WATCH_FEE_RATE) || 0.03, 0),
+    // Pause M-Pesa withdrawals automatically when an alert fires, until a super admin reviews it.
+    autoHold: process.env.GATEWAY_WATCH_AUTO_HOLD !== 'false',
+    alertPhones: (process.env.GATEWAY_ALERT_PHONES || process.env.FRAUD_ALERT_PHONES || process.env.LIQUIDITY_ALERT_PHONES || '0714073826')
+      .split(',')
+      .map((phone) => phone.trim())
+      .filter(Boolean),
+    unknownCallbackSmsCooldownMinutes: Math.max(Number(process.env.GATEWAY_UNKNOWN_CALLBACK_SMS_COOLDOWN_MINUTES) || 30, 1),
   },
 
   // Alerts for the real money at the payment provider (Mamlaka payout balance).

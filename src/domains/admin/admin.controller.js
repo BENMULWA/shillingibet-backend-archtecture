@@ -78,6 +78,31 @@ const listTreasuryMovements = asyncHandler(async (req, res) => {
   sendSuccess(res, { data: { movements, mamlakaPayoutKes: live?.payoutKes ?? null } });
 });
 
+const gatewayWatch = () => require('./gatewayWatch.service');
+
+const gatewayWatchStatus = asyncHandler(async (req, res) => {
+  const hours = Math.min(Math.max(Number(req.query.hours) || 24, 1), 24 * 14);
+  sendSuccess(res, { data: await gatewayWatch().getStatus({ hours }) });
+});
+
+const gatewayWatchCheck = asyncHandler(async (req, res) => {
+  const result = await gatewayWatch().tick({ force: true });
+  res.locals.audit = { action: 'gateway_watch.check_now', changes: { alerted: Boolean(result.alerted), skipped: Boolean(result.skipped) } };
+  sendSuccess(res, { data: { checked: Boolean(result.checked), alerted: Boolean(result.alerted), confirming: Boolean(result.confirming), skipped: Boolean(result.skipped), error: result.error || null } });
+});
+
+const gatewayWatchAcknowledge = asyncHandler(async (req, res) => {
+  const data = await gatewayWatch().acknowledge({ actorId: req.user._id, reason: req.body.reason, resumeWithdrawals: req.body.resumeWithdrawals });
+  res.locals.audit = { action: 'gateway_watch.acknowledged', reason: req.body.reason, changes: data };
+  sendSuccess(res, { data });
+});
+
+const gatewayWatchHold = asyncHandler(async (req, res) => {
+  const hold = await gatewayWatch().setHold({ active: req.body.active, reason: req.body.reason, by: req.user._id });
+  res.locals.audit = { action: req.body.active ? 'gateway_watch.withdrawals_paused' : 'gateway_watch.withdrawals_resumed', reason: req.body.reason, changes: { hold } };
+  sendSuccess(res, { data: { hold } });
+});
+
 const reconcileVirtualBet = asyncHandler(async (req, res) => {
   const data = await service.reconcileVirtualBet(req.body);
   sendSuccess(res, { message: 'Virtual bet reconciled', data });
@@ -433,5 +458,9 @@ module.exports = {
   getPayoutFloat,
   allocatePayoutFloat,
   listTreasuryMovements,
+  gatewayWatchStatus,
+  gatewayWatchCheck,
+  gatewayWatchAcknowledge,
+  gatewayWatchHold,
   reconcileVirtualBet,
 };

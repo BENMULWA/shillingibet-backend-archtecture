@@ -21,6 +21,7 @@ const { computeWithdrawalCharges, payoutAmountOf, matchesPayout } = require('./w
 const balanceIntegrity = require('../admin/balanceIntegrity.service');
 const notificationService = require('../notification/notification.service');
 const liquidityAlert = require('../admin/liquidityAlert.service');
+const gatewayWatch = require('../admin/gatewayWatch.service');
 
 const makeRef = (prefix) => `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -108,6 +109,10 @@ const settleRejectedWithdrawal = async (txn) => {
 
 const withdraw = async (user, { amount, phone, provider, walletType: requestedWalletType }) => {
   if (user.withdrawalPaused) throw ApiError.forbidden('Withdrawals are paused on this account');
+  // The gateway watchdog pauses M-Pesa payouts while unexplained money is leaving Mamlaka.
+  if (await gatewayWatch.isWithdrawalHoldActive()) {
+    throw new ApiError(503, 'Withdrawals are temporarily unavailable. Please try again shortly.');
+  }
   const recipientPhone = normalizePhone(phone);
   const mobileMoneySP = provider || config.mamlaka.defaultProvider;
   const walletType = normalizeWalletType(requestedWalletType || user.activeWallet);
@@ -274,6 +279,7 @@ const buildCallbackUpdate = (status, payload, processedAt, walletAppliedAt = nul
 const validateCallbackForTxn = (txn, type, payload, expectedType) => {
   if (!txn) {
     logger.warn('Callback for unknown transaction', payload.externalId);
+    void gatewayWatch.reportUnknownCallback(payload);
     return { ok: false, reason: 'unknown transaction' };
   }
 
@@ -528,6 +534,7 @@ const handleMamlakaCallback = async (payload) => {
     .lean();
   if (!txn) {
     logger.warn('Callback for unknown transaction', payload.externalId);
+    void gatewayWatch.reportUnknownCallback(payload);
     return { ok: false, reason: 'unknown transaction' };
   }
 

@@ -32,6 +32,13 @@ router.post('/transactions/:transactionId/resolve', can('transactions.resolve'),
 router.get('/treasury/withdrawals', can('treasury.view'), controller.getPayoutFloat);
 router.get('/treasury/withdrawals/movements', can('treasury.view'), controller.listTreasuryMovements);
 
+// Gateway watchdog: money leaving Mamlaka that Bingwake didn't send (gatewayWatch.service.js).
+// Status is polled under /analytics so the audit log isn't flooded; every action is audited.
+router.get('/analytics/gateway-watch', can('treasury.view'), controller.gatewayWatchStatus);
+router.post('/gateway-watch/check', requireSuperAdmin, controller.gatewayWatchCheck);
+router.post('/gateway-watch/acknowledge', requireSuperAdmin, validate({ body: mgmt.gatewayAcknowledge }), controller.gatewayWatchAcknowledge);
+router.post('/gateway-watch/hold', requireSuperAdmin, validate({ body: mgmt.gatewayHold }), controller.gatewayWatchHold);
+
 // Finance report: revenue, withdrawal tax (owed to KRA) and fees, per Nairobi day.
 // Polled under /analytics so the audit log isn't flooded; the CSV export is audited.
 router.get('/analytics/finance', can('finance.view', 'treasury.view'), validate({ query: schemas.financeReport }), controller.financeReport);
